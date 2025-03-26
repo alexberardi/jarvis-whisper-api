@@ -4,7 +4,7 @@ WHISPER_MODEL = "models/ggml-base.en.bin"
 
 def run_whisper(wav_path):
     result = subprocess.run([
-        "./main",
+        "main",
         "-m", WHISPER_MODEL,
         "-f", wav_path,
         "--language", "en",
