@@ -1,0 +1,42 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# macOS system files
+.DS_Store
+
+# Logs
+*.log
+
+# VS Code config
+.vscode/
+
+# PyCharm config
+.idea/
+
+# Temporary audio and transcription files
+audio/
+*.wav.txt
+*.tmp
+
+# dotenv files
+.env
+
+# Whisper model files (optional — include if you don’t want to track models)
+models/
+
+# Build artifacts
+build/
+*.cmake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+

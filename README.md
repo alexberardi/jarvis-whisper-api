@@ -1,3 +1,2 @@
-# whisper-cpp-api
-
-A lightweight REST API wrapper for whisper.cpp
+# jarvis-native-api
+A macOS-native REST API wrapper for whisper.cpp using CoreML for fast local transcription
