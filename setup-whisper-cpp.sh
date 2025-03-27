@@ -13,7 +13,8 @@ if [ ! -d venv ]; then
 fi
 source venv/bin/activate
 pip install --upgrade pip
-pip install coremltools ane-transformers openai-whisper
+pip uninstall -y torch torchvision torchaudio
+pip install --upgrade coremltools ane-transformers openai-whisper torch torchvision torchaudio numpy==1.24.3
 
 if [ ! -f models/ggml-base.en.bin ]; then
   bash ./models/download-ggml-model.sh base.en
