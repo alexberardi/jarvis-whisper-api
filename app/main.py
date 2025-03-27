@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 from app.utils import run_whisper
 import tempfile
 import shutil
+import os
 
 app = FastAPI()
 
@@ -14,7 +15,15 @@ async def transcribe(file: UploadFile = File(...)):
 
     try:
         text = run_whisper(tmp_path)
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        if os.path.exists(f"{tmp_path}.txt"):
+            os.remove(f"{tmp_path}.txt")
         return {"text": text}
     except Exception as e:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        if os.path.exists(f"{tmp_path}.txt"):
+            os.remove(f"{tmp_path}.txt")
         return JSONResponse(status_code=500, content={"error": str(e)})
 

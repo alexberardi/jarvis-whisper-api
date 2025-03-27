@@ -1,6 +1,8 @@
 import subprocess
+import os
 
-WHISPER_MODEL = "models/ggml-base.en.bin"
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", os.path.expanduser("~/whisper.cpp/models/ggml-base.en.bin"))
+
 
 def run_whisper(wav_path):
     result = subprocess.run([
@@ -15,7 +17,9 @@ def run_whisper(wav_path):
         raise RuntimeError(result.stderr)
 
     # Read the output .txt file
-    txt_path = wav_path.replace(".wav", ".txt").replace("/tmp", "audio")
+    txt_path = f"{wav_path}.txt"
+    print(wav_path)
+    print(txt_path)
     with open(txt_path) as f:
         return f.read().strip()
 
