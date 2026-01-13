@@ -1,7 +1,7 @@
 #!/bin/bash
 
-./setup-python.sh
-./setup-whisper-cpp.sh
+#./setup-python.sh
+#./setup-whisper-cpp.sh
 
 
 # Register native launch agent (macOS)
@@ -28,7 +28,7 @@ cat <<EOF > $PLIST
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	<string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
 </dict>
 </plist>
