@@ -7,14 +7,12 @@ if [ ! -d ~/whisper.cpp ]; then
 fi
 cd ~/whisper.cpp
 
-# Create venv inside whisper.cpp and install CoreML conversion dependencies
-if [ ! -d venv ]; then
-  python3 -m venv venv
-fi
-source venv/bin/activate
+pyenv virtualenv 3.11.8 whisper-api-3.11.8
+pyenv local whisper-api-3.11.8
+
 pip install --upgrade pip
 pip uninstall -y torch torchvision torchaudio
-pip install --upgrade coremltools ane-transformers openai-whisper torch torchvision torchaudio numpy==1.24.3
+pip install --upgrade setuptools numpy==1.24.3 coremltools ane-transformers openai-whisper torch torchvision torchaudio
 
 if [ ! -f models/ggml-base.en.bin ]; then
   bash ./models/download-ggml-model.sh base.en
