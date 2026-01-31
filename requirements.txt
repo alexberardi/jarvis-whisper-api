@@ -4,6 +4,7 @@ python-multipart
 resemblyzer
 python-dotenv
 httpx
+jarvis-log-client
 pytest
 
 
