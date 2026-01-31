@@ -8,7 +8,10 @@ REST API wrapper for whisper.cpp with optional speaker recognition.
 # Setup
 ./setup-python.sh && ./setup-whisper-cpp.sh
 
-# Run dev server (port 8012)
+# Run (Docker dev with hot reload + logging)
+./run-docker-dev.sh
+
+# Or direct (local dev)
 ./run-dev.sh
 
 # Test (requires valid node auth)

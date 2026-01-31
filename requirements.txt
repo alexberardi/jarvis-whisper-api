@@ -4,7 +4,8 @@ python-multipart
 resemblyzer
 python-dotenv
 httpx
-jarvis-log-client
 pytest
+scipy
+# jarvis-log-client installed from local mount at runtime
 
 
