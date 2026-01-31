@@ -3,5 +3,6 @@ uvicorn
 python-multipart
 resemblyzer
 python-dotenv
+pytest
 
 
