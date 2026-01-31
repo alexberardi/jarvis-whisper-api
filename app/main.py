@@ -68,6 +68,11 @@ def pong():
     return {"message": "pong"}
 
 
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
+
+
 @app.post("/transcribe")
 async def transcribe(
     file: UploadFile = File(...),
