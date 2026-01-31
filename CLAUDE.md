@@ -8,11 +8,13 @@ REST API wrapper for whisper.cpp with optional speaker recognition.
 # Setup
 ./setup-python.sh && ./setup-whisper-cpp.sh
 
-# Run dev server (port 9999)
+# Run dev server (port 8012)
 ./run-dev.sh
 
-# Test
-curl -X POST -F "file=@jfk.wav" http://localhost:9999/transcribe
+# Test (requires valid node auth)
+curl -X POST -F "file=@jfk.wav" \
+  -H "X-API-Key: node_id:node_key" \
+  http://localhost:8012/transcribe
 ```
 
 ## Architecture
@@ -20,34 +22,48 @@ curl -X POST -F "file=@jfk.wav" http://localhost:9999/transcribe
 ```
 app/
 ├── main.py      # FastAPI routes: /ping, /transcribe
-└── utils.py     # run_whisper(), recognize_speaker()
+├── deps.py      # Node authentication via jarvis-auth
+├── utils.py     # run_whisper(), recognize_speaker()
+└── exceptions.py
 ```
 
 - **Transcription**: Shells out to `whisper-cli` from whisper.cpp
 - **Speaker recognition**: Uses resemblyzer (optional, via USE_VOICE_RECOGNITION)
+- **Authentication**: Nodes authenticate via jarvis-auth service
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PORT` | 9999 | API port |
+| `PORT` | 8012 | API port |
 | `WHISPER_MODEL` | `~/whisper.cpp/models/ggml-base.en.bin` | GGML model path |
 | `WHISPER_CLI` | auto-detected | Path to whisper-cli binary |
 | `WHISPER_ENABLE_CUDA` | false | Build whisper.cpp with CUDA |
 | `USE_VOICE_RECOGNITION` | false | Enable speaker identification |
+| `JARVIS_AUTH_BASE_URL` | http://localhost:8007 | Auth service URL |
+| `JARVIS_APP_ID` | jarvis-whisper | App ID for auth |
+| `JARVIS_APP_KEY` | - | App key (required for auth) |
+| `NODE_AUTH_CACHE_TTL` | 60 | Cache TTL for auth validation |
 
 ## API Endpoints
 
-- `GET /ping` → `{"message": "pong"}`
-- `POST /transcribe` → `{"text": "...", "speaker": "..."}`
+- `GET /ping` → `{"message": "pong"}` (no auth required)
+- `POST /transcribe` → `{"text": "...", "speaker": "..."}` (auth required)
+  - Header: `X-API-Key: node_id:node_key`
   - Accepts: WAV file as multipart form data
   - Returns speaker as "unknown" if recognition disabled
 
 ## Dependencies
 
-- **Runtime**: Python 3.12, FastAPI, uvicorn, resemblyzer
+- **Runtime**: Python 3.12, FastAPI, uvicorn, resemblyzer, httpx
 - **External**: whisper.cpp (built via setup-whisper-cpp.sh)
 - **System**: libopenblas, libsndfile1, ffmpeg
+- **Jarvis**: jarvis-log-client (for remote logging)
+
+## Logging
+
+Uses jarvis-log-client for remote logging to jarvis-logs service.
+Configure with `JARVIS_LOG_CONSOLE_LEVEL` and `JARVIS_LOG_REMOTE_LEVEL`.
 
 ## Speaker Recognition
 
