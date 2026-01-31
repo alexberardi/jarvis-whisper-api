@@ -1,0 +1,21 @@
+version: '3.9'
+
+services:
+  jarvis-whisper:
+    build: .
+    ports:
+      - "${PORT:-8012}:${PORT:-8012}"
+    volumes:
+      - ./app:/app/app
+      - ./.env:/app/.env
+      - ../jarvis-log-client:/app/jarvis-log-client
+      - ~/whisper.cpp:/root/whisper.cpp:ro
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: >
+      sh -c "pip install -q -e /app/jarvis-log-client &&
+             uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8012} --reload"
