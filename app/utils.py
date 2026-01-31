@@ -1,3 +1,4 @@
+import logging
 import os
 import shutil
 import subprocess
@@ -8,6 +9,8 @@ import numpy as np
 from resemblyzer import VoiceEncoder, preprocess_wav
 
 from app.exceptions import WhisperTranscriptionError
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -49,12 +52,21 @@ def _build_subprocess_env(cli_path: str) -> dict[str, str]:
     return env
 
 
-def run_whisper(wav_path: str, prompt: str | None = None) -> str:
+def run_whisper(
+    wav_path: str,
+    prompt: str | None = None,
+    temperature: float = 0.0,
+    temperature_inc: float = 0.2,
+    beam_size: int = 5,
+) -> str:
     """Run whisper-cli to transcribe audio.
 
     Args:
         wav_path: Path to WAV file to transcribe.
         prompt: Optional initial prompt to guide transcription.
+        temperature: Initial temperature for sampling (default 0.0).
+        temperature_inc: Temperature increment on decode failure (default 0.2).
+        beam_size: Beam size for beam search (default 5).
 
     Returns:
         Transcribed text.
@@ -74,6 +86,12 @@ def run_whisper(wav_path: str, prompt: str | None = None) -> str:
         "--language",
         "en",
         "--output-txt",
+        "--temperature",
+        str(temperature),
+        "--temperature-inc",
+        str(temperature_inc),
+        "--beam-size",
+        str(beam_size),
     ]
 
     if prompt:
@@ -130,14 +148,14 @@ def recognize_speaker(audio_path: str, threshold: float = 0.75) -> SpeakerResult
         load_speaker_profiles()
 
     if not _loaded_profiles:
-        print("[recognizer] No speaker profiles loaded.")
+        logger.warning("No speaker profiles loaded")
         return SpeakerResult(name="unknown", confidence=0.0)
 
     try:
         wav = preprocess_wav(audio_path)
         embed = encoder.embed_utterance(wav)
     except Exception as e:
-        print(f"[recognizer] Failed to process input audio: {e}")
+        logger.error(f"Failed to process input audio: {e}")
         return SpeakerResult(name="unknown", confidence=0.0)
 
     # Compare to each profile
@@ -147,7 +165,7 @@ def recognize_speaker(audio_path: str, threshold: float = 0.75) -> SpeakerResult
     }
 
     # Choose best match above threshold
-    best_match = max(scores, key=scores.get)
+    best_match = max(scores, key=lambda k: scores[k])
     best_score = scores[best_match]
 
     if best_score > threshold:
