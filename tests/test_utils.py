@@ -90,6 +90,90 @@ class TestRunWhisper:
         args_list = call_args[0][0]
         assert "--prompt" not in args_list
 
+    @patch("app.utils.subprocess.run")
+    @patch("builtins.open", mock_open(read_data="Hello world"))
+    def test_run_whisper_with_temperature(self, mock_subprocess: MagicMock) -> None:
+        """run_whisper should pass temperature to whisper-cli."""
+        mock_subprocess.return_value = MagicMock(returncode=0, stderr="")
+
+        run_whisper("/tmp/test.wav", temperature=0.3)
+
+        call_args = mock_subprocess.call_args
+        args_list = call_args[0][0]
+        assert "--temperature" in args_list
+        temp_idx = args_list.index("--temperature")
+        assert args_list[temp_idx + 1] == "0.3"
+
+    @patch("app.utils.subprocess.run")
+    @patch("builtins.open", mock_open(read_data="Hello world"))
+    def test_run_whisper_with_temperature_inc(self, mock_subprocess: MagicMock) -> None:
+        """run_whisper should pass temperature-inc to whisper-cli."""
+        mock_subprocess.return_value = MagicMock(returncode=0, stderr="")
+
+        run_whisper("/tmp/test.wav", temperature_inc=0.1)
+
+        call_args = mock_subprocess.call_args
+        args_list = call_args[0][0]
+        assert "--temperature-inc" in args_list
+        temp_inc_idx = args_list.index("--temperature-inc")
+        assert args_list[temp_inc_idx + 1] == "0.1"
+
+    @patch("app.utils.subprocess.run")
+    @patch("builtins.open", mock_open(read_data="Hello world"))
+    def test_run_whisper_with_beam_size(self, mock_subprocess: MagicMock) -> None:
+        """run_whisper should pass beam-size to whisper-cli."""
+        mock_subprocess.return_value = MagicMock(returncode=0, stderr="")
+
+        run_whisper("/tmp/test.wav", beam_size=3)
+
+        call_args = mock_subprocess.call_args
+        args_list = call_args[0][0]
+        assert "--beam-size" in args_list
+        beam_idx = args_list.index("--beam-size")
+        assert args_list[beam_idx + 1] == "3"
+
+    @patch("app.utils.subprocess.run")
+    @patch("builtins.open", mock_open(read_data="Hello world"))
+    def test_run_whisper_default_temperature_params(self, mock_subprocess: MagicMock) -> None:
+        """run_whisper should use default temperature params."""
+        mock_subprocess.return_value = MagicMock(returncode=0, stderr="")
+
+        run_whisper("/tmp/test.wav")
+
+        call_args = mock_subprocess.call_args
+        args_list = call_args[0][0]
+        # Default values should be passed
+        temp_idx = args_list.index("--temperature")
+        assert args_list[temp_idx + 1] == "0.0"
+        temp_inc_idx = args_list.index("--temperature-inc")
+        assert args_list[temp_inc_idx + 1] == "0.2"
+        beam_idx = args_list.index("--beam-size")
+        assert args_list[beam_idx + 1] == "5"
+
+    @patch("app.utils.subprocess.run")
+    @patch("builtins.open", mock_open(read_data="Hello world"))
+    def test_run_whisper_all_params_together(self, mock_subprocess: MagicMock) -> None:
+        """run_whisper should handle all parameters together."""
+        mock_subprocess.return_value = MagicMock(returncode=0, stderr="")
+
+        result = run_whisper(
+            "/tmp/test.wav",
+            prompt="Test prompt",
+            temperature=0.5,
+            temperature_inc=0.15,
+            beam_size=8,
+        )
+
+        assert result == "Hello world"
+        call_args = mock_subprocess.call_args
+        args_list = call_args[0][0]
+
+        # Verify all params
+        assert "--prompt" in args_list
+        assert "--temperature" in args_list
+        assert "--temperature-inc" in args_list
+        assert "--beam-size" in args_list
+
 
 class TestRecognizeSpeaker:
     """Test recognize_speaker function."""

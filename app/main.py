@@ -7,8 +7,9 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Query, UploadFile
 from fastapi.responses import JSONResponse
 
+from app.audio import preprocess_audio
 from app.deps import verify_node_auth
-from app.exceptions import WhisperTranscriptionError
+from app.exceptions import AudioProcessingError, WhisperTranscriptionError
 from app.utils import recognize_speaker, run_whisper
 
 load_dotenv()
@@ -77,6 +78,10 @@ def health():
 async def transcribe(
     file: UploadFile = File(...),
     prompt: str | None = Query(default=None, description="Initial prompt to guide transcription"),
+    preprocess: bool = Query(default=False, description="Apply audio normalization and silence trimming"),
+    temperature: float = Query(default=0.0, ge=0.0, le=1.0, description="Initial temperature for sampling (0.0-1.0)"),
+    temperature_inc: float = Query(default=0.2, ge=0.0, le=1.0, description="Temperature increment on decode failure (0.0-1.0)"),
+    beam_size: int = Query(default=5, ge=1, le=16, description="Beam size for beam search (1-16)"),
     node_id: str = Depends(verify_node_auth),
 ):
     logger.debug(f"Transcription request from node: {node_id}")
@@ -85,13 +90,35 @@ async def transcribe(
         shutil.copyfileobj(file.file, tmp)
         tmp_path = tmp.name
 
+    processed_path: str | None = None
+
     try:
-        text = run_whisper(tmp_path, prompt=prompt)
+        # Apply preprocessing if requested
+        if preprocess:
+            processed_path = f"{tmp_path}.processed.wav"
+            try:
+                preprocess_audio(tmp_path, processed_path)
+                logger.debug(f"Preprocessed audio for node {node_id}")
+            except AudioProcessingError as e:
+                logger.warning(f"Preprocessing failed, using original: {e}")
+                processed_path = None
+
+        # Use processed file if available, otherwise original
+        whisper_input = processed_path if processed_path else tmp_path
+
+        text = run_whisper(
+            whisper_input,
+            prompt=prompt,
+            temperature=temperature,
+            temperature_inc=temperature_inc,
+            beam_size=beam_size,
+        )
         logger.info(f"Transcribed {len(text)} chars for node {node_id}")
 
         speaker_response: dict[str, str | float] = {"name": "unknown", "confidence": 0.0}
 
         if os.getenv("USE_VOICE_RECOGNITION", "false").lower() == "true":
+            # Use original file for speaker recognition (raw audio may be better)
             speaker_result = recognize_speaker(tmp_path)
             speaker_response = {
                 "name": speaker_result.name,
@@ -113,8 +140,14 @@ async def transcribe(
         logger.error(f"Unexpected error for node {node_id}: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
     finally:
+        # Clean up temp files
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
         if os.path.exists(f"{tmp_path}.txt"):
             os.remove(f"{tmp_path}.txt")
+        if processed_path:
+            if os.path.exists(processed_path):
+                os.remove(processed_path)
+            if os.path.exists(f"{processed_path}.txt"):
+                os.remove(f"{processed_path}.txt")
 
