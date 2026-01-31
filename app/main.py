@@ -3,9 +3,10 @@ import shutil
 import tempfile
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Query, UploadFile
 from fastapi.responses import JSONResponse
 
+from app.deps import verify_node_auth
 from app.exceptions import WhisperTranscriptionError
 from app.utils import recognize_speaker, run_whisper
 
@@ -23,6 +24,7 @@ def pong():
 async def transcribe(
     file: UploadFile = File(...),
     prompt: str | None = Query(default=None, description="Initial prompt to guide transcription"),
+    node_id: str = Depends(verify_node_auth),
 ):
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         shutil.copyfileobj(file.file, tmp)
