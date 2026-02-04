@@ -8,9 +8,10 @@ from fastapi import Depends, FastAPI, File, Query, UploadFile
 from fastapi.responses import JSONResponse
 
 from app.audio import preprocess_audio
-from app.deps import verify_node_auth
+from app.deps import verify_app_auth
 from app.exceptions import AudioProcessingError, WhisperTranscriptionError
 from app.utils import recognize_speaker, run_whisper
+from jarvis_auth_client.models import AppAuthResult
 
 load_dotenv()
 
@@ -82,9 +83,12 @@ async def transcribe(
     temperature: float = Query(default=0.0, ge=0.0, le=1.0, description="Initial temperature for sampling (0.0-1.0)"),
     temperature_inc: float = Query(default=0.2, ge=0.0, le=1.0, description="Temperature increment on decode failure (0.0-1.0)"),
     beam_size: int = Query(default=5, ge=1, le=16, description="Beam size for beam search (1-16)"),
-    node_id: str = Depends(verify_node_auth),
+    auth: AppAuthResult = Depends(verify_app_auth),
 ):
-    logger.debug(f"Transcription request from node: {node_id}")
+    logger.debug(
+        f"Transcription request from {auth.app.app_id} "
+        f"for household {auth.context.household_id}, node {auth.context.node_id}"
+    )
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         shutil.copyfileobj(file.file, tmp)
@@ -98,7 +102,7 @@ async def transcribe(
             processed_path = f"{tmp_path}.processed.wav"
             try:
                 preprocess_audio(tmp_path, processed_path)
-                logger.debug(f"Preprocessed audio for node {node_id}")
+                logger.debug(f"Preprocessed audio for node {auth.context.node_id}")
             except AudioProcessingError as e:
                 logger.warning(f"Preprocessing failed, using original: {e}")
                 processed_path = None
@@ -113,15 +117,20 @@ async def transcribe(
             temperature_inc=temperature_inc,
             beam_size=beam_size,
         )
-        logger.info(f"Transcribed {len(text)} chars for node {node_id}")
+        logger.info(f"Transcribed {len(text)} chars for node {auth.context.node_id}")
 
-        speaker_response: dict[str, str | float] = {"name": "unknown", "confidence": 0.0}
+        speaker_response: dict[str, int | float | None] = {"user_id": None, "confidence": 0.0}
 
         if os.getenv("USE_VOICE_RECOGNITION", "false").lower() == "true":
             # Use original file for speaker recognition (raw audio may be better)
-            speaker_result = recognize_speaker(tmp_path)
+            # household_member_ids comes from context headers, passed by command-center
+            speaker_result = recognize_speaker(
+                tmp_path,
+                household_id=auth.context.household_id or "",
+                member_ids=auth.context.household_member_ids,
+            )
             speaker_response = {
-                "name": speaker_result.name,
+                "user_id": speaker_result.user_id,
                 "confidence": speaker_result.confidence,
             }
 
@@ -131,13 +140,13 @@ async def transcribe(
         }
 
     except WhisperTranscriptionError as e:
-        logger.error(f"Transcription failed for node {node_id}: {e}")
+        logger.error(f"Transcription failed for node {auth.context.node_id}: {e}")
         return JSONResponse(
             status_code=500,
             content={"error": str(e), "stderr": e.stderr},
         )
     except Exception as e:
-        logger.error(f"Unexpected error for node {node_id}: {e}")
+        logger.error(f"Unexpected error for node {auth.context.node_id}: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
     finally:
         # Clean up temp files
