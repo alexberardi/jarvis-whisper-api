@@ -170,8 +170,8 @@ def load_household_profiles(
                 wav = preprocess_wav(filepath)
                 profiles[user_id] = encoder.embed_utterance(wav)
                 logger.debug(f"Loaded voice profile for user {user_id}")
-            except Exception as e:
-                logger.error(f"Failed to load profile for user {user_id}: {e}")
+            except (OSError, ValueError, RuntimeError) as e:
+                logger.error(f"Failed to load profile for user {user_id}: {type(e).__name__}: {e}")
 
     _household_profiles_cache[household_id] = profiles
     return profiles
@@ -217,8 +217,8 @@ def recognize_speaker(
     try:
         wav = preprocess_wav(audio_path)
         embed = encoder.embed_utterance(wav)
-    except Exception as e:
-        logger.error(f"Failed to process input audio: {e}")
+    except (OSError, ValueError, RuntimeError) as e:
+        logger.error(f"Failed to process input audio: {type(e).__name__}: {e}")
         return SpeakerResult(user_id=None, confidence=0.0)
 
     # Compare to each profile
