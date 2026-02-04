@@ -24,13 +24,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pytest-httpx
-
-      - name: Install jarvis packages
-        run: |
-          # Install jarvis-auth-client and jarvis-log-client
-          # These are expected to be available via pip or a private index
-          # For local dev, they're installed from sibling directories
-          pip install jarvis-auth-client jarvis-log-client || echo "Note: jarvis packages not available in PyPI, tests may fail"
+          pip install git+https://github.com/alexberardi/jarvis-auth-client.git
+          pip install git+https://github.com/alexberardi/jarvis-log-client.git
 
       - name: Run tests
         run: |
