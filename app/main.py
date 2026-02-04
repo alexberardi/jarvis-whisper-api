@@ -145,8 +145,11 @@ async def transcribe(
             status_code=500,
             content={"error": str(e), "stderr": e.stderr},
         )
-    except Exception as e:
-        logger.error(f"Unexpected error for node {auth.context.node_id}: {e}")
+    except OSError as e:
+        logger.error(f"File I/O error for node {auth.context.node_id}: {e}")
+        return JSONResponse(status_code=500, content={"error": f"File error: {e}"})
+    except (ValueError, RuntimeError) as e:
+        logger.error(f"Processing error for node {auth.context.node_id}: {type(e).__name__}: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
     finally:
         # Clean up temp files
