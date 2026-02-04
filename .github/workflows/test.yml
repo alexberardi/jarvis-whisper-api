@@ -1,0 +1,37 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest-httpx
+
+      - name: Install jarvis packages
+        run: |
+          # Install jarvis-auth-client and jarvis-log-client
+          # These are expected to be available via pip or a private index
+          # For local dev, they're installed from sibling directories
+          pip install jarvis-auth-client jarvis-log-client || echo "Note: jarvis packages not available in PyPI, tests may fail"
+
+      - name: Run tests
+        run: |
+          python -m pytest tests/ -v --tb=short
