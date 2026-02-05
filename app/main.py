@@ -57,6 +57,16 @@ def _setup_remote_logging() -> None:
 
 app = FastAPI(title="Jarvis Whisper API", version="1.0.0")
 
+# Add settings router from shared library
+from jarvis_settings_client import create_settings_router
+from app.services.settings_service import get_settings_service
+
+_settings_router = create_settings_router(
+    service=get_settings_service(),
+    auth_dependency=verify_app_auth,
+)
+app.include_router(_settings_router, prefix="/v1/settings", tags=["settings"])
+
 
 @app.on_event("startup")
 async def startup_event():
