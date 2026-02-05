@@ -340,7 +340,7 @@ class TestRecognizeSpeaker:
     ) -> None:
         """recognize_speaker should return None user_id on processing error."""
         mock_load.return_value = {1: np.array([1.0, 0.0, 0.0])}
-        mock_preprocess.side_effect = Exception("Audio file corrupted")
+        mock_preprocess.side_effect = RuntimeError("Audio file corrupted")
 
         result = recognize_speaker("/tmp/test.wav", "household-1", [1])
 
