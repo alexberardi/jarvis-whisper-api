@@ -18,7 +18,6 @@ from jarvis_settings_client.types import SettingValue
 
 from app.services.settings_definitions import SETTINGS_DEFINITIONS
 from app.services.settings_service import (
-    WhisperSettingsService,
     get_settings_service,
     reset_settings_service,
 )
@@ -59,53 +58,6 @@ class TestSettingsDefinitions:
         assert "auth.cache_ttl_seconds" in keys
 
 
-class TestWhisperSettingsService:
-    """Tests for WhisperSettingsService helper methods."""
-
-    @pytest.fixture
-    def service(self):
-        """Create a service instance for testing."""
-        return WhisperSettingsService(
-            definitions=SETTINGS_DEFINITIONS,
-            get_db_session=lambda: None,
-            setting_model=None,
-        )
-
-    def test_get_model_config(self, service):
-        """Test get_model_config method."""
-        with patch.dict(os.environ, {
-            "WHISPER_MODEL": "/custom/model.bin",
-            "WHISPER_CLI": "/usr/bin/whisper-cli",
-            "WHISPER_ENABLE_CUDA": "true",
-        }):
-            config = service.get_model_config()
-            assert config["model_path"] == "/custom/model.bin"
-            assert config["cli_path"] == "/usr/bin/whisper-cli"
-            assert config["enable_cuda"] is True
-
-    def test_get_transcription_defaults(self, service):
-        """Test get_transcription_defaults method."""
-        with patch.dict(os.environ, {
-            "WHISPER_DEFAULT_TEMPERATURE": "0.5",
-            "WHISPER_DEFAULT_TEMPERATURE_INC": "0.3",
-            "WHISPER_DEFAULT_BEAM_SIZE": "10",
-            "WHISPER_LANGUAGE": "de",
-        }):
-            config = service.get_transcription_defaults()
-            assert config["temperature"] == 0.5
-            assert config["temperature_inc"] == 0.3
-            assert config["beam_size"] == 10
-            assert config["language"] == "de"
-
-    def test_get_voice_config(self, service):
-        """Test get_voice_config method."""
-        with patch.dict(os.environ, {
-            "USE_VOICE_RECOGNITION": "true",
-            "VOICE_SIMILARITY_THRESHOLD": "0.85",
-        }):
-            config = service.get_voice_config()
-            assert config["enabled"] is True
-            assert config["similarity_threshold"] == 0.85
 
 
 class TestSettingsServiceCache:
@@ -114,7 +66,7 @@ class TestSettingsServiceCache:
     @pytest.fixture
     def service(self):
         """Create a service instance for testing."""
-        return WhisperSettingsService(
+        return SettingsService(
             definitions=SETTINGS_DEFINITIONS,
             get_db_session=lambda: None,
             setting_model=None,
@@ -192,7 +144,7 @@ class TestSettingsServiceEnvFallback:
     @pytest.fixture
     def service(self):
         """Create a service instance for testing."""
-        return WhisperSettingsService(
+        return SettingsService(
             definitions=SETTINGS_DEFINITIONS,
             get_db_session=lambda: None,
             setting_model=None,
@@ -223,7 +175,7 @@ class TestSettingsServiceTypedGetters:
     @pytest.fixture
     def service(self):
         """Create a service instance for testing."""
-        return WhisperSettingsService(
+        return SettingsService(
             definitions=SETTINGS_DEFINITIONS,
             get_db_session=lambda: None,
             setting_model=None,
@@ -264,7 +216,7 @@ class TestSettingsServiceListMethods:
     @pytest.fixture
     def service(self):
         """Create a service instance for testing."""
-        return WhisperSettingsService(
+        return SettingsService(
             definitions=SETTINGS_DEFINITIONS,
             get_db_session=lambda: None,
             setting_model=None,
