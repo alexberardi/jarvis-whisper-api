@@ -18,11 +18,11 @@ class TestVerifyAppAuth:
 
     def setup_method(self) -> None:
         """Initialize auth client before each test."""
-        init(app_id="jarvis-whisper", app_key="test-key")
+        init(auth_base_url="http://localhost:8007")
 
-    def teardown_method(self) -> None:
+    async def teardown_method(self) -> None:
         """Clean up after each test."""
-        shutdown()
+        await shutdown()
 
     def test_missing_app_credentials_raises_401(self) -> None:
         """Should raise HTTPException when app credentials are missing."""
