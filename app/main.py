@@ -61,11 +61,12 @@ app = FastAPI(title="Jarvis Whisper API", version="1.0.0")
 from jarvis_settings_client import create_settings_router, create_combined_auth, create_superuser_auth
 from app.services.settings_service import get_settings_service
 
-_auth_url = os.getenv("JARVIS_AUTH_BASE_URL", "http://localhost:8007")
+from app import service_config
+
 _settings_router = create_settings_router(
     service=get_settings_service(),
-    auth_dependency=create_combined_auth(_auth_url),
-    write_auth_dependency=create_superuser_auth(_auth_url),
+    auth_dependency=create_combined_auth(service_config.get_auth_url),
+    write_auth_dependency=create_superuser_auth(service_config.get_auth_url),
 )
 app.include_router(_settings_router, prefix="/settings", tags=["settings"])
 
@@ -73,6 +74,7 @@ app.include_router(_settings_router, prefix="/settings", tags=["settings"])
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on app startup."""
+    service_config.init()
     _setup_remote_logging()
     logger.info("Jarvis Whisper API service started")
 
