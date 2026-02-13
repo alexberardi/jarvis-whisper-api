@@ -1,6 +1,5 @@
 """Database models for jarvis-whisper-api."""
 
-from datetime import datetime
 
 from sqlalchemy import (
     Boolean,
