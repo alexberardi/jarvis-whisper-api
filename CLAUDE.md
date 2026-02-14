@@ -58,10 +58,25 @@ app/
 
 ## Dependencies
 
-- **Runtime**: Python 3.12, FastAPI, uvicorn, resemblyzer, httpx
-- **External**: whisper.cpp (built via setup-whisper-cpp.sh)
-- **System**: libopenblas, libsndfile1, ffmpeg
-- **Jarvis**: jarvis-log-client (for remote logging)
+**Python Libraries:**
+- Python 3.12, FastAPI, uvicorn, resemblyzer, httpx
+- jarvis-log-client (for remote logging)
+
+**External Dependencies:**
+- whisper.cpp (built via setup-whisper-cpp.sh)
+- System: libopenblas, libsndfile1, ffmpeg
+
+**Service Dependencies:**
+- ✅ **Required**: `jarvis-auth` (8007) - Node authentication validation
+- ⚠️ **Optional**: `jarvis-logs` (8006) - Centralized logging (degrades to console if unavailable)
+- ⚠️ **Optional**: `jarvis-config-service` (8013) - Service discovery
+
+**Used By:**
+- `jarvis-command-center` - Speech-to-text transcription (optional)
+
+**Impact if Down:**
+- ⚠️ Speech transcription unavailable (if command-center uses this service)
+- ✅ Command-center may have alternative transcription methods
 
 ## Logging
 

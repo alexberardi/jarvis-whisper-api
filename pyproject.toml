@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jarvis-whisper-api"
+version = "0.1.0"
+description = "REST API wrapper for whisper.cpp with speaker recognition"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
+    "resemblyzer",
+    "python-dotenv",
+    "httpx",
+    "scipy",
+    "sqlalchemy>=2.0.23",
+    "alembic>=1.12.1",
+    "psycopg2-binary>=2.9.9",
+    "jarvis-settings-client @ git+https://github.com/alexberardi/jarvis-settings-client.git@main",
+    "jarvis-auth-client @ git+https://github.com/alexberardi/jarvis-auth-client.git@main",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]

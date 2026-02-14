@@ -26,12 +26,12 @@ RUN git clone https://github.com/ggerganov/whisper.cpp.git /root/whisper.cpp && 
     (cp build/bin/libwhisper.so* /usr/local/lib/ 2>/dev/null || cp build/src/libwhisper.so* /usr/local/lib/ 2>/dev/null || true) && \
     ldconfig
 
-# Install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
 # Copy application
 COPY app /app/app
+
+# Install Python dependencies
+COPY pyproject.toml .
+RUN pip install --no-cache-dir .
 
 # Environment defaults
 ENV PORT=8012

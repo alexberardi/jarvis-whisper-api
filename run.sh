@@ -20,12 +20,14 @@ else
     export $(grep -v '^#' .env | xargs)
 
     # Activate venv if it exists
-    if [ -d "venv" ]; then
-        source venv/bin/activate
+    if [ -d ".venv" ]; then
+        source .venv/bin/activate
     fi
 
-    # Install jarvis-log-client from local path
-    pip install -q -e ../jarvis-log-client 2>/dev/null || echo "Note: jarvis-log-client not found, remote logging disabled"
+    # Install jarvis client libraries
+    JARVIS_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+    source "${JARVIS_ROOT}/scripts/install-clients.sh"
+    install_jarvis_clients log-client config-client auth-client settings-client
 
     uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8012} --reload
 fi
