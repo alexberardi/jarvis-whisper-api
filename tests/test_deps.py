@@ -18,7 +18,7 @@ class TestVerifyAppAuth:
 
     def setup_method(self) -> None:
         """Initialize auth client before each test."""
-        init(auth_base_url="http://localhost:8007")
+        init(auth_base_url="http://localhost:7701")
 
     def teardown_method(self) -> None:
         """Clean up after each test."""
@@ -26,7 +26,7 @@ class TestVerifyAppAuth:
 
         _fastapi_mod._http_client = None
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_missing_app_credentials_raises_401(self) -> None:
         """Should raise HTTPException when app credentials are missing."""
         from app.deps import verify_app_auth
@@ -37,11 +37,11 @@ class TestVerifyAppAuth:
         assert exc_info.value.status_code == 401
         assert "credentials" in exc_info.value.detail.lower()
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_invalid_app_credentials_raises_401(self, httpx_mock: HTTPXMock) -> None:
         """Should raise HTTPException when app credentials are invalid."""
         httpx_mock.add_response(
-            url="http://localhost:8007/internal/app-ping",
+            url="http://localhost:7701/internal/app-ping",
             status_code=401,
         )
 
@@ -55,13 +55,13 @@ class TestVerifyAppAuth:
 
         assert exc_info.value.status_code == 401
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_valid_app_credentials_returns_auth_result(
         self, httpx_mock: HTTPXMock
     ) -> None:
         """Should return AppAuthResult with valid credentials."""
         httpx_mock.add_response(
-            url="http://localhost:8007/internal/app-ping",
+            url="http://localhost:7701/internal/app-ping",
             status_code=200,
             json={"app_id": "command-center"},
         )
@@ -77,11 +77,11 @@ class TestVerifyAppAuth:
         assert result.app.valid is True
         assert result.app.app_id == "command-center"
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_context_headers_are_extracted(self, httpx_mock: HTTPXMock) -> None:
         """Should extract context headers into RequestContext."""
         httpx_mock.add_response(
-            url="http://localhost:8007/internal/app-ping",
+            url="http://localhost:7701/internal/app-ping",
             status_code=200,
             json={"app_id": "command-center"},
         )
@@ -101,11 +101,11 @@ class TestVerifyAppAuth:
         assert result.context.node_id == "kitchen-pi"
         assert result.context.user_id == 42
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_context_headers_optional(self, httpx_mock: HTTPXMock) -> None:
         """Should work without context headers (they're optional)."""
         httpx_mock.add_response(
-            url="http://localhost:8007/internal/app-ping",
+            url="http://localhost:7701/internal/app-ping",
             status_code=200,
             json={"app_id": "command-center"},
         )
@@ -121,11 +121,11 @@ class TestVerifyAppAuth:
         assert result.context.node_id is None
         assert result.context.user_id is None
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_household_member_ids_extracted(self, httpx_mock: HTTPXMock) -> None:
         """Should extract household_member_ids from context header."""
         httpx_mock.add_response(
-            url="http://localhost:8007/internal/app-ping",
+            url="http://localhost:7701/internal/app-ping",
             status_code=200,
             json={"app_id": "command-center"},
         )
@@ -141,11 +141,11 @@ class TestVerifyAppAuth:
 
         assert result.context.household_member_ids == [1, 2, 42]
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_household_member_ids_default_empty(self, httpx_mock: HTTPXMock) -> None:
         """Should default household_member_ids to empty list when not provided."""
         httpx_mock.add_response(
-            url="http://localhost:8007/internal/app-ping",
+            url="http://localhost:7701/internal/app-ping",
             status_code=200,
             json={"app_id": "command-center"},
         )
@@ -159,14 +159,14 @@ class TestVerifyAppAuth:
 
         assert result.context.household_member_ids == []
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_auth_service_unavailable_raises_401(self, httpx_mock: HTTPXMock) -> None:
         """Should raise 401 when auth service is unreachable."""
         import httpx as httpx_lib
 
         httpx_mock.add_exception(
             httpx_lib.ConnectError("Connection refused"),
-            url="http://localhost:8007/internal/app-ping",
+            url="http://localhost:7701/internal/app-ping",
         )
 
         from app.deps import verify_app_auth

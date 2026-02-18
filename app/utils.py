@@ -118,10 +118,18 @@ def run_whisper(
 
 
 PROFILE_DIR = Path("voice_profiles")
-encoder = VoiceEncoder()
+_encoder: VoiceEncoder | None = None
 
 # Cache loaded embeddings keyed by household_id, then user_id
 _household_profiles_cache: dict[str, dict[int, np.ndarray]] = {}
+
+
+def _get_encoder() -> VoiceEncoder:
+    """Lazy-load the VoiceEncoder to avoid import-time model initialization."""
+    global _encoder
+    if _encoder is None:
+        _encoder = VoiceEncoder()
+    return _encoder
 
 
 def hash_user_id(user_id: int) -> str:
@@ -168,7 +176,7 @@ def load_household_profiles(
         if filepath.exists():
             try:
                 wav = preprocess_wav(filepath)
-                profiles[user_id] = encoder.embed_utterance(wav)
+                profiles[user_id] = _get_encoder().embed_utterance(wav)
                 logger.debug(f"Loaded voice profile for user {user_id}")
             except (OSError, ValueError, RuntimeError) as e:
                 logger.error(f"Failed to load profile for user {user_id}: {type(e).__name__}: {e}")
@@ -216,7 +224,7 @@ def recognize_speaker(
 
     try:
         wav = preprocess_wav(audio_path)
-        embed = encoder.embed_utterance(wav)
+        embed = _get_encoder().embed_utterance(wav)
     except (OSError, ValueError, RuntimeError) as e:
         logger.error(f"Failed to process input audio: {type(e).__name__}: {e}")
         return SpeakerResult(user_id=None, confidence=0.0)

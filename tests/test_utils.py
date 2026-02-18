@@ -300,7 +300,7 @@ class TestRecognizeSpeaker:
 
     @patch("app.utils.load_household_profiles")
     @patch("app.utils.preprocess_wav")
-    @patch("app.utils.encoder")
+    @patch("app.utils._get_encoder")
     def test_recognize_speaker_matches_correct_user(
         self, mock_encoder: MagicMock, mock_preprocess: MagicMock, mock_load: MagicMock
     ) -> None:
@@ -308,7 +308,7 @@ class TestRecognizeSpeaker:
         mock_load.return_value = {42: np.array([1.0, 0.0, 0.0])}
         mock_preprocess.return_value = np.array([1.0])
         # Return embedding very similar to user 42's profile
-        mock_encoder.embed_utterance.return_value = np.array([0.95, 0.0, 0.0])
+        mock_encoder.return_value.embed_utterance.return_value = np.array([0.95, 0.0, 0.0])
 
         result = recognize_speaker("/tmp/test.wav", "household-1", [42])
 
@@ -317,7 +317,7 @@ class TestRecognizeSpeaker:
 
     @patch("app.utils.load_household_profiles")
     @patch("app.utils.preprocess_wav")
-    @patch("app.utils.encoder")
+    @patch("app.utils._get_encoder")
     def test_recognize_speaker_below_threshold_returns_none(
         self, mock_encoder: MagicMock, mock_preprocess: MagicMock, mock_load: MagicMock
     ) -> None:
@@ -325,7 +325,7 @@ class TestRecognizeSpeaker:
         mock_load.return_value = {42: np.array([1.0, 0.0, 0.0])}
         mock_preprocess.return_value = np.array([1.0])
         # Return embedding very different from user's profile
-        mock_encoder.embed_utterance.return_value = np.array([0.0, 1.0, 0.0])
+        mock_encoder.return_value.embed_utterance.return_value = np.array([0.0, 1.0, 0.0])
 
         result = recognize_speaker("/tmp/test.wav", "household-1", [42])
 
@@ -349,7 +349,7 @@ class TestRecognizeSpeaker:
 
     @patch("app.utils.load_household_profiles")
     @patch("app.utils.preprocess_wav")
-    @patch("app.utils.encoder")
+    @patch("app.utils._get_encoder")
     def test_recognize_speaker_custom_threshold(
         self, mock_encoder: MagicMock, mock_preprocess: MagicMock, mock_load: MagicMock
     ) -> None:
@@ -357,7 +357,7 @@ class TestRecognizeSpeaker:
         mock_load.return_value = {99: np.array([1.0, 0.0, 0.0])}
         mock_preprocess.return_value = np.array([1.0])
         # Return embedding with 0.8 similarity
-        mock_encoder.embed_utterance.return_value = np.array([0.8, 0.6, 0.0])
+        mock_encoder.return_value.embed_utterance.return_value = np.array([0.8, 0.6, 0.0])
 
         # With default threshold (0.75), should match
         result_default = recognize_speaker("/tmp/test.wav", "household-1", [99])
@@ -371,7 +371,7 @@ class TestRecognizeSpeaker:
 
     @patch("app.utils.load_household_profiles")
     @patch("app.utils.preprocess_wav")
-    @patch("app.utils.encoder")
+    @patch("app.utils._get_encoder")
     def test_recognize_speaker_multiple_users_best_match(
         self, mock_encoder: MagicMock, mock_preprocess: MagicMock, mock_load: MagicMock
     ) -> None:
@@ -383,7 +383,7 @@ class TestRecognizeSpeaker:
         }
         mock_preprocess.return_value = np.array([1.0])
         # Return embedding most similar to user 2's profile
-        mock_encoder.embed_utterance.return_value = np.array([0.1, 0.95, 0.1])
+        mock_encoder.return_value.embed_utterance.return_value = np.array([0.1, 0.95, 0.1])
 
         result = recognize_speaker("/tmp/test.wav", "household-1", [1, 2, 3])
 
