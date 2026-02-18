@@ -34,7 +34,7 @@ COPY pyproject.toml .
 RUN pip install --no-cache-dir .
 
 # Environment defaults
-ENV PORT=8012
+ENV PORT=7706
 ENV WHISPER_MODEL=/root/whisper.cpp/models/ggml-base.en.bin
 ENV WHISPER_CLI=/usr/local/bin/whisper-cli
 

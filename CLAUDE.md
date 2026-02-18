@@ -17,7 +17,7 @@ REST API wrapper for whisper.cpp with optional speaker recognition.
 # Test (requires valid node auth)
 curl -X POST -F "file=@jfk.wav" \
   -H "X-API-Key: node_id:node_key" \
-  http://localhost:8012/transcribe
+  http://localhost:7706/transcribe
 ```
 
 ## Architecture
@@ -38,12 +38,12 @@ app/
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PORT` | 8012 | API port |
+| `PORT` | 7706 | API port |
 | `WHISPER_MODEL` | `~/whisper.cpp/models/ggml-base.en.bin` | GGML model path |
 | `WHISPER_CLI` | auto-detected | Path to whisper-cli binary |
 | `WHISPER_ENABLE_CUDA` | false | Build whisper.cpp with CUDA |
 | `USE_VOICE_RECOGNITION` | false | Enable speaker identification |
-| `JARVIS_AUTH_BASE_URL` | http://localhost:8007 | Auth service URL |
+| `JARVIS_AUTH_BASE_URL` | http://localhost:7701 | Auth service URL |
 | `JARVIS_APP_ID` | jarvis-whisper | App ID for auth |
 | `JARVIS_APP_KEY` | - | App key (required for auth) |
 | `NODE_AUTH_CACHE_TTL` | 60 | Cache TTL for auth validation |
@@ -67,9 +67,9 @@ app/
 - System: libopenblas, libsndfile1, ffmpeg
 
 **Service Dependencies:**
-- ✅ **Required**: `jarvis-auth` (8007) - Node authentication validation
-- ⚠️ **Optional**: `jarvis-logs` (8006) - Centralized logging (degrades to console if unavailable)
-- ⚠️ **Optional**: `jarvis-config-service` (8013) - Service discovery
+- ✅ **Required**: `jarvis-auth` (7701) - Node authentication validation
+- ⚠️ **Optional**: `jarvis-logs` (7702) - Centralized logging (degrades to console if unavailable)
+- ⚠️ **Optional**: `jarvis-config-service` (7700) - Service discovery
 
 **Used By:**
 - `jarvis-command-center` - Speech-to-text transcription (optional)

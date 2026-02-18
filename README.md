@@ -13,7 +13,7 @@ A Linux-friendly REST API wrapper for `whisper.cpp` with optional speaker recogn
 - `WHISPER_CLI`: optional path to `whisper-cli` (useful if not on `PATH`)
 - `WHISPER_ENABLE_CUDA`: set to `true` or `1` to build with CUDA
 - `USE_VOICE_RECOGNITION`: set to `true` to enable speaker recognition
-- `PORT`: override the default port (9999)
+- `PORT`: override the default port (7706)
 
 ## Production
 ```bash
