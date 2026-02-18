@@ -7,9 +7,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from resemblyzer import VoiceEncoder, preprocess_wav
 
 from app.exceptions import WhisperTranscriptionError
+
+try:
+    from resemblyzer import VoiceEncoder, preprocess_wav
+except ImportError:
+    VoiceEncoder = None  # type: ignore[assignment,misc]
+    preprocess_wav = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -124,10 +129,12 @@ _encoder: VoiceEncoder | None = None
 _household_profiles_cache: dict[str, dict[int, np.ndarray]] = {}
 
 
-def _get_encoder() -> VoiceEncoder:
+def _get_encoder() -> "VoiceEncoder":
     """Lazy-load the VoiceEncoder to avoid import-time model initialization."""
     global _encoder
     if _encoder is None:
+        if VoiceEncoder is None:
+            raise ImportError("resemblyzer is required for voice recognition")
         _encoder = VoiceEncoder()
     return _encoder
 
