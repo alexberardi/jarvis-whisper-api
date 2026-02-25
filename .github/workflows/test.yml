@@ -27,3 +27,7 @@ jobs:
       - name: Run tests
         run: |
           python -m pytest tests/ -v --tb=short
+
+      - name: Check test coverage
+        run: |
+          python -m pytest tests/ --cov=app --cov-report=term-missing --cov-fail-under=80
