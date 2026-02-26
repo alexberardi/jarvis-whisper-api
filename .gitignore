@@ -45,3 +45,12 @@ cmake_install.cmake
 Makefile
 
 whisper.err
+
+# Test / coverage artifacts
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Packaging artifacts
+*.egg-info/
+dist/
