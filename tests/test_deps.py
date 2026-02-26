@@ -25,6 +25,7 @@ class TestVerifyAppAuth:
         import jarvis_auth_client.fastapi as _fastapi_mod
 
         _fastapi_mod._http_client = None
+        _fastapi_mod.clear_validation_cache()
 
     @pytest.mark.asyncio
     async def test_missing_app_credentials_raises_401(self) -> None:
