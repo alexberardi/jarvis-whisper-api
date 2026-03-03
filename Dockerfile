@@ -23,7 +23,7 @@ RUN git clone https://github.com/ggerganov/whisper.cpp.git /root/whisper.cpp && 
     cmake -B build -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS && \
     cmake --build build --config Release -j$(nproc) && \
     cp build/bin/whisper-cli /usr/local/bin/whisper-cli && \
-    (cp build/bin/libwhisper.so* /usr/local/lib/ 2>/dev/null || cp build/src/libwhisper.so* /usr/local/lib/ 2>/dev/null || true) && \
+    find build -name 'lib*.so*' -exec cp {} /usr/local/lib/ \; && \
     ldconfig
 
 # Copy application
