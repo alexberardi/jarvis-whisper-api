@@ -70,6 +70,10 @@ _settings_router = create_settings_router(
 )
 app.include_router(_settings_router, prefix="/settings", tags=["settings"])
 
+# Voice profile enrollment endpoints
+from app.api.voice_profiles import router as voice_profiles_router
+app.include_router(voice_profiles_router)
+
 
 @app.on_event("startup")
 async def startup_event():
