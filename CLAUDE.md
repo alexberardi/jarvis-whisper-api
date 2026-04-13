@@ -24,10 +24,12 @@ curl -X POST -F "file=@jfk.wav" \
 
 ```
 app/
-├── main.py      # FastAPI routes: /ping, /transcribe
-├── deps.py      # Node authentication via jarvis-auth
-├── utils.py     # run_whisper(), recognize_speaker()
-└── exceptions.py
+├── main.py          # FastAPI app, routes: /ping, /transcribe
+├── deps.py          # App-to-app authentication via jarvis-auth
+├── utils.py         # run_whisper(), recognize_speaker(), hash_user_id()
+├── exceptions.py
+└── api/
+    └── voice_profiles.py  # Voice enrollment CRUD endpoints
 ```
 
 - **Transcription**: Shells out to `whisper-cli` from whisper.cpp
@@ -51,10 +53,18 @@ app/
 ## API Endpoints
 
 - `GET /ping` → `{"message": "pong"}` (no auth required)
-- `POST /transcribe` → `{"text": "...", "speaker": "..."}` (auth required)
-  - Header: `X-API-Key: node_id:node_key`
+- `GET /health` → `{"status": "healthy"}` (no auth required)
+- `POST /transcribe` → `{"text": "...", "speaker": {"user_id": 42, "confidence": 0.87}}` (app-to-app auth)
   - Accepts: WAV file as multipart form data
-  - Returns speaker as "unknown" if recognition disabled
+  - Returns speaker user_id + confidence if voice recognition enabled
+
+### Voice Profile Enrollment (app-to-app auth)
+
+- `POST /voice-profiles/enroll?user_id=&household_id=` — Upload WAV voice sample
+- `DELETE /voice-profiles/{user_id}?household_id=` — Remove a voice profile
+- `GET /voice-profiles?household_id=` — List enrolled profiles
+
+Profiles stored at `voice_profiles/{household_id}/{hash(user_id)}.wav`. Command-center proxies these via `/api/v0/media/whisper/voice-profiles/*`.
 
 ## Dependencies
 
@@ -87,8 +97,15 @@ Configure with `JARVIS_LOG_CONSOLE_LEVEL` and `JARVIS_LOG_REMOTE_LEVEL`.
 
 To enable:
 1. Set `USE_VOICE_RECOGNITION=true`
-2. Add WAV files to `voice_profiles/` directory (filename = speaker name)
+2. Enroll voice profiles via the API (`POST /voice-profiles/enroll`) or place WAV files in `voice_profiles/{household_id}/` directory
 3. Threshold for match: 0.75 cosine similarity
+4. Profiles are hashed by user_id (`hash_user_id()` in `app/utils.py`)
+
+## Testing
+
+```bash
+pytest tests/test_voice_profiles.py -v  # 6 tests, no external deps needed
+```
 
 ## Notes
 

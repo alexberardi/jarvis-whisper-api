@@ -103,16 +103,18 @@ SETTINGS_DEFINITIONS: list[SettingDefinition] = [
         category="server",
         value_type="string",
         default="INFO",
-        description="Console logging level (DEBUG, INFO, WARNING, ERROR)",
+        description="Console logging level",
         env_fallback="JARVIS_LOG_CONSOLE_LEVEL",
+        options=["DEBUG", "INFO", "WARNING", "ERROR"],
     ),
     SettingDefinition(
         key="server.log_remote_level",
         category="server",
         value_type="string",
         default="DEBUG",
-        description="Remote logging level (DEBUG, INFO, WARNING, ERROR)",
+        description="Remote logging level",
         env_fallback="JARVIS_LOG_REMOTE_LEVEL",
+        options=["DEBUG", "INFO", "WARNING", "ERROR"],
     ),
 
     # Auth configuration
