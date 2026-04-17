@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from jarvis_auth_client.models import AppAuthResult
 
 from app.deps import verify_app_auth
-from app.utils import PROFILE_DIR, hash_user_id, invalidate_household_cache
+from app.utils import PROFILE_DIR, hash_user_id, invalidate_household_cache, recognize_speaker
 
 logger = logging.getLogger("uvicorn")
 router = APIRouter(prefix="/voice-profiles", tags=["voice-profiles"])
@@ -106,3 +106,65 @@ async def list_voice_profiles(
         })
 
     return {"household_id": household_id, "profiles": profiles}
+
+
+@router.get("/check")
+async def check_voice_profile(
+    user_id: int,
+    household_id: str,
+    auth: AppAuthResult = Depends(verify_app_auth),
+):
+    """Check whether a voice profile exists for a specific user."""
+    filepath = PROFILE_DIR / household_id / (hash_user_id(user_id) + ".wav")
+    return {"exists": filepath.exists(), "user_id": user_id}
+
+
+@router.post("/verify")
+async def verify_voice_profile(
+    user_id: int,
+    household_id: str,
+    file: UploadFile = File(...),
+    auth: AppAuthResult = Depends(verify_app_auth),
+):
+    """Test whether an audio sample matches a user's enrolled voice profile.
+
+    Runs resemblyzer speaker recognition only (no whisper transcription),
+    so this is fast (~150ms). Used by the mobile app's enrollment wizard
+    to let the user confirm their profile works before walking away.
+    """
+    # Check profile exists first
+    profile_path = PROFILE_DIR / household_id / (hash_user_id(user_id) + ".wav")
+    if not profile_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"No voice profile enrolled for user {user_id}",
+        )
+
+    # Save uploaded audio to temp file
+    with tempfile.NamedTemporaryFile(
+        suffix=".wav", dir=tempfile.gettempdir(), delete=False
+    ) as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        tmp_path = tmp.name
+
+    try:
+        result = recognize_speaker(
+            audio_path=tmp_path,
+            household_id=household_id,
+            member_ids=[user_id],
+            threshold=0.65,  # Lower than default 0.75 for 1:1 targeted match
+        )
+    finally:
+        os.unlink(tmp_path)
+
+    matched = result.user_id is not None
+    logger.info(
+        f"Voice profile verify: user_id={user_id} matched={matched} "
+        f"confidence={result.confidence:.3f}"
+    )
+
+    return {
+        "matched": matched,
+        "confidence": round(result.confidence, 4),
+        "user_id": user_id,
+    }
