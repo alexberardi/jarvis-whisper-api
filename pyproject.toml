@@ -8,8 +8,8 @@ version = "0.1.0"
 description = "REST API wrapper for whisper.cpp with speaker recognition"
 requires-python = ">=3.11"
 dependencies = [
-    "jarvis-config-client @ git+https://github.com/alexberardi/jarvis-config-client.git@main",
-    "jarvis-log-client @ git+https://github.com/alexberardi/jarvis-log-client.git@main",
+    "jarvis-config-client @ git+https://github.com/alexberardi/jarvis-config-client.git@ea1c63a",
+    "jarvis-log-client @ git+https://github.com/alexberardi/jarvis-log-client.git@46aa757",
     "fastapi",
     "uvicorn",
     "python-multipart",
@@ -20,8 +20,8 @@ dependencies = [
     "sqlalchemy>=2.0.23",
     "alembic>=1.12.1",
     "psycopg2-binary>=2.9.9",
-    "jarvis-settings-client @ git+https://github.com/alexberardi/jarvis-settings-client.git@main",
-    "jarvis-auth-client @ git+https://github.com/alexberardi/jarvis-auth-client.git@main",
+    "jarvis-settings-client @ git+https://github.com/alexberardi/jarvis-settings-client.git@9902feb",
+    "jarvis-auth-client @ git+https://github.com/alexberardi/jarvis-auth-client.git@4549b23",
 ]
 
 [project.optional-dependencies]
