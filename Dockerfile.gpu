@@ -1,0 +1,90 @@
+# GPU variant: same service, CUDA-enabled torch + whisper.cpp built with cuBLAS.
+# Builds an image that runs resemblyzer (speaker recognition) on the GPU,
+# which on a single-GPU host shaves ~5-9s off every transcription request
+# vs. the slim CPU image.
+#
+# Build:  docker build -f Dockerfile.gpu -t jarvis-whisper-api:gpu .
+# Run:    docker compose -f docker-compose.gpu.yaml up -d
+#
+# Requires nvidia-container-toolkit on the host. For Apple Silicon (no
+# CUDA), keep using the default Dockerfile.
+
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS build
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    git \
+    wget \
+    pkg-config \
+    libopenblas-dev \
+    libsndfile1 \
+    ffmpeg \
+    curl \
+    python3.11 \
+    python3.11-venv \
+    python3.11-dev \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
+
+# CUDA driver stub setup: the nvidia/cuda dev image ships libcuda.so (the stub)
+# but not the libcuda.so.1 SONAME the linker looks for. Create the symlink so
+# ld can resolve `NEEDED libcuda.so.1` declarations from libggml-cuda. At
+# runtime the real libcuda.so.1 is provided by nvidia-container-toolkit, so
+# the stub is link-time only.
+RUN ln -sf libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1
+
+WORKDIR /app
+
+# Build whisper.cpp with cuBLAS (GPU-accelerated transcription).
+#
+# WHISPER_CUDA_ARCH: CMake CUDA arch list (semicolon-separated). Default 86 (RTX 3080 Ti / Ampere).
+#   Other common values: 75 (RTX 20xx Turing), 80 (A100 Ampere), 86 (RTX 30xx),
+#   89 (RTX 40xx Ada), 90 (H100 Hopper), or a list like "80;86;89".
+#   Override at build time:  --build-arg WHISPER_CUDA_ARCH=89
+#   Or via .env on the host:  WHISPER_CUDA_ARCH=89
+#
+# We build only the whisper-cli target (skipping whisper-bench) because newer
+# whisper.cpp's bench example pulls in CUDA driver-API symbols that aren't
+# resolvable when only the libcuda stub is available at image-build time.
+ARG WHISPER_MODEL_NAME=base.en
+ARG WHISPER_CUDA_ARCH=86
+RUN git clone https://github.com/ggerganov/whisper.cpp.git /root/whisper.cpp \
+    && cd /root/whisper.cpp \
+    && bash ./models/download-ggml-model.sh ${WHISPER_MODEL_NAME} \
+    && cmake -B build \
+        -DGGML_CUDA=ON \
+        -DCMAKE_CUDA_ARCHITECTURES="${WHISPER_CUDA_ARCH}" \
+        -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs -L/usr/local/cuda/lib64/stubs" \
+        -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs -L/usr/local/cuda/lib64/stubs" \
+        -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
+        -DCMAKE_INSTALL_RPATH=/usr/local/lib \
+    && cmake --build build --config Release --target whisper-cli -j$(nproc) \
+    && cp build/bin/whisper-cli /usr/local/bin/whisper-cli \
+    && find build -name 'lib*.so*' -exec cp {} /usr/local/lib/ \; \
+    && ldconfig
+
+COPY app /app/app
+COPY pyproject.toml .
+
+# Install CUDA-enabled torch wheel BEFORE installing the project, so
+# resemblyzer's torch dep doesn't pull the CPU wheel.
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu124 torch \
+    && pip install --no-cache-dir .
+
+ENV PORT=7706 \
+    WHISPER_MODEL=/root/whisper.cpp/models/ggml-base.en.bin \
+    WHISPER_CLI=/usr/local/bin/whisper-cli \
+    JARVIS_VOICE_DEVICE=cuda
+
+EXPOSE 7706
+
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT}
