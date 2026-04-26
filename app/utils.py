@@ -131,13 +131,40 @@ _encoder: VoiceEncoder | None = None
 _household_profiles_cache: dict[str, dict[int, np.ndarray]] = {}
 
 
+def _resolve_voice_device() -> str:
+    """Pick the torch device for the speaker-recognition encoder.
+
+    Honors ``JARVIS_VOICE_DEVICE`` env (``auto`` | ``cuda`` | ``cpu``).
+    Falls back to CPU if CUDA is requested or auto-selected but the
+    runtime doesn't support it — never raises so the service stays up.
+    """
+    pref = os.getenv("JARVIS_VOICE_DEVICE", "auto").lower()
+    if pref == "cpu":
+        return "cpu"
+    try:
+        import torch
+        cuda_ok = bool(torch.cuda.is_available())
+    except Exception:
+        cuda_ok = False
+    if pref == "cuda":
+        if not cuda_ok:
+            logger.warning(
+                "JARVIS_VOICE_DEVICE=cuda but torch.cuda.is_available() is False — falling back to CPU"
+            )
+            return "cpu"
+        return "cuda"
+    return "cuda" if cuda_ok else "cpu"
+
+
 def _get_encoder() -> "VoiceEncoder":
-    """Lazy-load the VoiceEncoder to avoid import-time model initialization."""
+    """Lazy-load the VoiceEncoder. Device chosen via JARVIS_VOICE_DEVICE."""
     global _encoder
     if _encoder is None:
         if VoiceEncoder is None:
             raise ImportError("resemblyzer is required for voice recognition")
-        _encoder = VoiceEncoder()
+        device = _resolve_voice_device()
+        logger.info("Loading VoiceEncoder on device=%s", device)
+        _encoder = VoiceEncoder(device=device, verbose=False)
     return _encoder
 
 
@@ -248,7 +275,17 @@ def recognize_speaker(
     best_user_id = max(scores, key=lambda k: scores[k])
     best_score = scores[best_user_id]
 
-    if best_score > threshold:
+    matched = best_score > threshold
+    logger.info(
+        "Speaker match: household=%s best_user=%s score=%.3f threshold=%.2f → %s",
+        household_id,
+        best_user_id,
+        best_score,
+        threshold,
+        "MATCHED" if matched else "no match",
+    )
+
+    if matched:
         return SpeakerResult(user_id=best_user_id, confidence=best_score)
 
     return SpeakerResult(user_id=None, confidence=best_score)

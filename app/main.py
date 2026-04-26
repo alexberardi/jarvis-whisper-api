@@ -2,6 +2,7 @@ import logging
 import os
 import shutil
 import tempfile
+import time
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Query, UploadFile
@@ -80,6 +81,22 @@ async def startup_event():
     """Initialize services on app startup."""
     service_config.init()
     _setup_remote_logging()
+
+    # Pre-warm VoiceEncoder if speaker recognition is on, so the first
+    # transcription request doesn't pay the ~5-7s CUDA-init + model→GPU
+    # cold-start cost. Failure is non-fatal — first request will pay it.
+    if os.getenv("USE_VOICE_RECOGNITION", "false").lower() == "true":
+        try:
+            from app.utils import _get_encoder
+            t0 = time.perf_counter()
+            _get_encoder()
+            logger.info(
+                "VoiceEncoder pre-warmed in %d ms",
+                int((time.perf_counter() - t0) * 1000),
+            )
+        except (ImportError, RuntimeError, OSError) as e:
+            logger.warning(f"VoiceEncoder pre-warm failed: {type(e).__name__}: {e}")
+
     logger.info("Jarvis Whisper API service started")
 
 
@@ -108,9 +125,11 @@ async def transcribe(
         f"for household {auth.context.household_id}, node {auth.context.node_id}"
     )
 
+    t_start = time.perf_counter()
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         shutil.copyfileobj(file.file, tmp)
         tmp_path = tmp.name
+    t_saved = time.perf_counter()
 
     processed_path: str | None = None
 
@@ -124,6 +143,7 @@ async def transcribe(
             except AudioProcessingError as e:
                 logger.warning(f"Preprocessing failed, using original: {e}")
                 processed_path = None
+        t_preproc = time.perf_counter()
 
         # Use processed file if available, otherwise original
         whisper_input = processed_path if processed_path else tmp_path
@@ -135,11 +155,13 @@ async def transcribe(
             temperature_inc=temperature_inc,
             beam_size=beam_size,
         )
+        t_whisper = time.perf_counter()
         logger.info(f"Transcribed {len(text)} chars for node {auth.context.node_id}")
 
         speaker_response: dict[str, int | float | None] = {"user_id": None, "confidence": 0.0}
+        speaker_enabled = os.getenv("USE_VOICE_RECOGNITION", "false").lower() == "true"
 
-        if os.getenv("USE_VOICE_RECOGNITION", "false").lower() == "true":
+        if speaker_enabled:
             # Use original file for speaker recognition (raw audio may be better)
             # household_member_ids comes from context headers, passed by command-center
             speaker_result = recognize_speaker(
@@ -151,6 +173,16 @@ async def transcribe(
                 "user_id": speaker_result.user_id,
                 "confidence": speaker_result.confidence,
             }
+        t_speaker = time.perf_counter()
+
+        logger.info(
+            "transcribe phases (ms): save=%d preproc=%d whisper=%d speaker=%d total=%d",
+            int((t_saved - t_start) * 1000),
+            int((t_preproc - t_saved) * 1000),
+            int((t_whisper - t_preproc) * 1000),
+            int((t_speaker - t_whisper) * 1000) if speaker_enabled else 0,
+            int((t_speaker - t_start) * 1000),
+        )
 
         return {
             "text": text,

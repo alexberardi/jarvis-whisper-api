@@ -1,0 +1,28 @@
+# GPU overlay — apply on top of docker-compose.dev.yaml.
+#
+# Usage:
+#   docker compose -f docker-compose.dev.yaml -f docker-compose.gpu.yaml up -d --build
+#
+# Requires nvidia-container-toolkit installed on the host. With this
+# overlay, whisper.cpp transcription runs through cuBLAS (CUDA) and
+# resemblyzer's VoiceEncoder runs on the GPU — both shave significant
+# latency vs. the CPU image.
+
+services:
+  jarvis-whisper:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+      args:
+        # Override via host .env (or `WHISPER_CUDA_ARCH=89 docker compose ... build`).
+        # Default 86 = RTX 3080 Ti / Ampere. See Dockerfile.gpu for the full list.
+        WHISPER_CUDA_ARCH: ${WHISPER_CUDA_ARCH:-86}
+    environment:
+      - JARVIS_VOICE_DEVICE=cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
