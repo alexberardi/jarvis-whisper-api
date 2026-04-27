@@ -38,24 +38,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # The ROCm variant pulls a 5 GB torch wheel on top of a ~10 GB rocm-complete
+      # base image. Default GHA ubuntu runners (~14 GB free after stock tools)
+      # OOM during pip install. jlumbroso/free-disk-space frees ~30 GB more.
       - name: Free up disk space
-        run: |
-          echo "Disk space before cleanup:"
-          df -h
-
-          # Remove unnecessary tools and files
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo rm -rf /usr/local/share/boost
-          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
-
-          # Clean up docker
-          docker system prune -af --volumes
-
-          echo "Disk space after cleanup:"
-          df -h
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
