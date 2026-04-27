@@ -82,6 +82,18 @@ async def startup_event():
     service_config.init()
     _setup_remote_logging()
 
+    # Pre-warm the whisper model so the first transcription request doesn't
+    # pay the ~3s model load. Failure here is fatal — without the model the
+    # service can't transcribe, so let the health check 500 rather than
+    # silently degrading on every request.
+    from app.whisper_engine import get_model
+    t0 = time.perf_counter()
+    get_model()
+    logger.info(
+        "Whisper model pre-warmed in %d ms",
+        int((time.perf_counter() - t0) * 1000),
+    )
+
     # Pre-warm VoiceEncoder if speaker recognition is on, so the first
     # transcription request doesn't pay the ~5-7s CUDA-init + model→GPU
     # cold-start cost. Failure is non-fatal — first request will pay it.

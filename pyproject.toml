@@ -13,6 +13,7 @@ dependencies = [
     "fastapi",
     "uvicorn",
     "python-multipart",
+    "pywhispercpp==1.4.1",
     "resemblyzer",
     "python-dotenv",
     "httpx",

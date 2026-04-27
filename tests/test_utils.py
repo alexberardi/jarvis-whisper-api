@@ -1,7 +1,7 @@
 """Tests for utils module."""
 
 from pathlib import Path
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -15,6 +15,13 @@ from app.utils import (
     recognize_speaker,
     run_whisper,
 )
+
+
+def _make_segment(text: str) -> MagicMock:
+    """Build a fake pywhispercpp Segment with a .text attribute."""
+    seg = MagicMock()
+    seg.text = text
+    return seg
 
 
 class TestSpeakerResult:
@@ -139,126 +146,115 @@ class TestInvalidateHouseholdCache:
 class TestRunWhisper:
     """Test run_whisper function."""
 
-    @patch("app.utils.subprocess.run")
-    @patch("builtins.open", mock_open(read_data="Hello world"))
-    def test_run_whisper_success(self, mock_subprocess: MagicMock) -> None:
-        """run_whisper should return transcribed text on success."""
-        mock_subprocess.return_value = MagicMock(returncode=0, stderr="")
+    @patch("app.utils.get_model")
+    def test_run_whisper_success(self, mock_get_model: MagicMock) -> None:
+        """run_whisper should join segment texts and return the trimmed result."""
+        model = MagicMock()
+        model.transcribe.return_value = [_make_segment("Hello "), _make_segment("world")]
+        mock_get_model.return_value = model
 
         result = run_whisper("/tmp/test.wav")
 
-        assert result == "Hello world"
-        mock_subprocess.assert_called_once()
+        assert result == "Hello  world"
+        model.transcribe.assert_called_once()
 
-    @patch("app.utils.subprocess.run")
+    @patch("app.utils.get_model")
     def test_run_whisper_failure_raises_transcription_error(
-        self, mock_subprocess: MagicMock
+        self, mock_get_model: MagicMock
     ) -> None:
-        """run_whisper should raise WhisperTranscriptionError on failure."""
-        mock_subprocess.return_value = MagicMock(
-            returncode=1, stderr="Model file not found"
-        )
+        """run_whisper should wrap underlying errors in WhisperTranscriptionError."""
+        model = MagicMock()
+        model.transcribe.side_effect = RuntimeError("Model file not found")
+        mock_get_model.return_value = model
 
         with pytest.raises(WhisperTranscriptionError) as exc_info:
             run_whisper("/tmp/test.wav")
 
-        assert "exit code 1" in str(exc_info.value)
-        assert exc_info.value.stderr == "Model file not found"
+        assert "Model file not found" in str(exc_info.value)
+        assert "Model file not found" in (exc_info.value.stderr or "")
 
-    @patch("app.utils.subprocess.run")
-    @patch("builtins.open", mock_open(read_data="Jarvis turn on lights"))
-    def test_run_whisper_with_prompt(self, mock_subprocess: MagicMock) -> None:
-        """run_whisper should pass prompt to whisper-cli."""
-        mock_subprocess.return_value = MagicMock(returncode=0, stderr="")
+    @patch("app.utils.get_model")
+    def test_run_whisper_with_prompt(self, mock_get_model: MagicMock) -> None:
+        """run_whisper should pass prompt as initial_prompt."""
+        model = MagicMock()
+        model.transcribe.return_value = [_make_segment("Jarvis turn on lights")]
+        mock_get_model.return_value = model
 
         result = run_whisper("/tmp/test.wav", prompt="Jarvis commands")
 
         assert result == "Jarvis turn on lights"
+        kwargs = model.transcribe.call_args.kwargs
+        assert kwargs["initial_prompt"] == "Jarvis commands"
 
-        # Verify --prompt was passed in the args
-        call_args = mock_subprocess.call_args
-        args_list = call_args[0][0]  # First positional arg is the command list
-        assert "--prompt" in args_list
-        prompt_index = args_list.index("--prompt")
-        assert args_list[prompt_index + 1] == "Jarvis commands"
-
-    @patch("app.utils.subprocess.run")
-    @patch("builtins.open", mock_open(read_data="Hello"))
-    def test_run_whisper_without_prompt(self, mock_subprocess: MagicMock) -> None:
-        """run_whisper should not include --prompt when not provided."""
-        mock_subprocess.return_value = MagicMock(returncode=0, stderr="")
+    @patch("app.utils.get_model")
+    def test_run_whisper_without_prompt(self, mock_get_model: MagicMock) -> None:
+        """run_whisper should pass empty initial_prompt when prompt is None."""
+        model = MagicMock()
+        model.transcribe.return_value = [_make_segment("Hello")]
+        mock_get_model.return_value = model
 
         run_whisper("/tmp/test.wav")
 
-        call_args = mock_subprocess.call_args
-        args_list = call_args[0][0]
-        assert "--prompt" not in args_list
+        kwargs = model.transcribe.call_args.kwargs
+        assert kwargs["initial_prompt"] == ""
 
-    @patch("app.utils.subprocess.run")
-    @patch("builtins.open", mock_open(read_data="Hello world"))
-    def test_run_whisper_with_temperature(self, mock_subprocess: MagicMock) -> None:
-        """run_whisper should pass temperature to whisper-cli."""
-        mock_subprocess.return_value = MagicMock(returncode=0, stderr="")
+    @patch("app.utils.get_model")
+    def test_run_whisper_with_temperature(self, mock_get_model: MagicMock) -> None:
+        """run_whisper should pass temperature to the model."""
+        model = MagicMock()
+        model.transcribe.return_value = [_make_segment("Hello world")]
+        mock_get_model.return_value = model
 
         run_whisper("/tmp/test.wav", temperature=0.3)
 
-        call_args = mock_subprocess.call_args
-        args_list = call_args[0][0]
-        assert "--temperature" in args_list
-        temp_idx = args_list.index("--temperature")
-        assert args_list[temp_idx + 1] == "0.3"
+        kwargs = model.transcribe.call_args.kwargs
+        assert kwargs["temperature"] == 0.3
 
-    @patch("app.utils.subprocess.run")
-    @patch("builtins.open", mock_open(read_data="Hello world"))
-    def test_run_whisper_with_temperature_inc(self, mock_subprocess: MagicMock) -> None:
-        """run_whisper should pass temperature-inc to whisper-cli."""
-        mock_subprocess.return_value = MagicMock(returncode=0, stderr="")
+    @patch("app.utils.get_model")
+    def test_run_whisper_with_temperature_inc(self, mock_get_model: MagicMock) -> None:
+        """run_whisper should pass temperature_inc to the model."""
+        model = MagicMock()
+        model.transcribe.return_value = [_make_segment("Hello world")]
+        mock_get_model.return_value = model
 
         run_whisper("/tmp/test.wav", temperature_inc=0.1)
 
-        call_args = mock_subprocess.call_args
-        args_list = call_args[0][0]
-        assert "--temperature-inc" in args_list
-        temp_inc_idx = args_list.index("--temperature-inc")
-        assert args_list[temp_inc_idx + 1] == "0.1"
+        kwargs = model.transcribe.call_args.kwargs
+        assert kwargs["temperature_inc"] == 0.1
 
-    @patch("app.utils.subprocess.run")
-    @patch("builtins.open", mock_open(read_data="Hello world"))
-    def test_run_whisper_with_beam_size(self, mock_subprocess: MagicMock) -> None:
-        """run_whisper should pass beam-size to whisper-cli."""
-        mock_subprocess.return_value = MagicMock(returncode=0, stderr="")
+    @patch("app.utils.get_model")
+    def test_run_whisper_with_beam_size(self, mock_get_model: MagicMock) -> None:
+        """run_whisper should pass beam_size inside the beam_search dict."""
+        model = MagicMock()
+        model.transcribe.return_value = [_make_segment("Hello world")]
+        mock_get_model.return_value = model
 
         run_whisper("/tmp/test.wav", beam_size=3)
 
-        call_args = mock_subprocess.call_args
-        args_list = call_args[0][0]
-        assert "--beam-size" in args_list
-        beam_idx = args_list.index("--beam-size")
-        assert args_list[beam_idx + 1] == "3"
+        kwargs = model.transcribe.call_args.kwargs
+        assert kwargs["beam_search"] == {"beam_size": 3, "patience": -1.0}
 
-    @patch("app.utils.subprocess.run")
-    @patch("builtins.open", mock_open(read_data="Hello world"))
-    def test_run_whisper_default_temperature_params(self, mock_subprocess: MagicMock) -> None:
-        """run_whisper should use default temperature params."""
-        mock_subprocess.return_value = MagicMock(returncode=0, stderr="")
+    @patch("app.utils.get_model")
+    def test_run_whisper_default_params(self, mock_get_model: MagicMock) -> None:
+        """run_whisper should use sane defaults for temperature/beam params."""
+        model = MagicMock()
+        model.transcribe.return_value = [_make_segment("Hello world")]
+        mock_get_model.return_value = model
 
         run_whisper("/tmp/test.wav")
 
-        call_args = mock_subprocess.call_args
-        args_list = call_args[0][0]
-        # Default values should be passed
-        temp_idx = args_list.index("--temperature")
-        assert args_list[temp_idx + 1] == "0.0"
-        temp_inc_idx = args_list.index("--temperature-inc")
-        assert args_list[temp_inc_idx + 1] == "0.2"
-        beam_idx = args_list.index("--beam-size")
-        assert args_list[beam_idx + 1] == "5"
+        kwargs = model.transcribe.call_args.kwargs
+        assert kwargs["temperature"] == 0.0
+        assert kwargs["temperature_inc"] == 0.2
+        assert kwargs["beam_search"] == {"beam_size": 5, "patience": -1.0}
+        assert kwargs["language"] == "en"
 
-    @patch("app.utils.subprocess.run")
-    @patch("builtins.open", mock_open(read_data="Hello world"))
-    def test_run_whisper_all_params_together(self, mock_subprocess: MagicMock) -> None:
-        """run_whisper should handle all parameters together."""
-        mock_subprocess.return_value = MagicMock(returncode=0, stderr="")
+    @patch("app.utils.get_model")
+    def test_run_whisper_all_params_together(self, mock_get_model: MagicMock) -> None:
+        """run_whisper should forward all params together."""
+        model = MagicMock()
+        model.transcribe.return_value = [_make_segment("Hello world")]
+        mock_get_model.return_value = model
 
         result = run_whisper(
             "/tmp/test.wav",
@@ -269,14 +265,11 @@ class TestRunWhisper:
         )
 
         assert result == "Hello world"
-        call_args = mock_subprocess.call_args
-        args_list = call_args[0][0]
-
-        # Verify all params
-        assert "--prompt" in args_list
-        assert "--temperature" in args_list
-        assert "--temperature-inc" in args_list
-        assert "--beam-size" in args_list
+        kwargs = model.transcribe.call_args.kwargs
+        assert kwargs["initial_prompt"] == "Test prompt"
+        assert kwargs["temperature"] == 0.5
+        assert kwargs["temperature_inc"] == 0.15
+        assert kwargs["beam_search"] == {"beam_size": 8, "patience": -1.0}
 
 
 class TestRecognizeSpeaker:
