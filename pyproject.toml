@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jarvis-whisper-api"
-version = "0.1.0"
+version = "0.1.4"
 description = "REST API wrapper for whisper.cpp with speaker recognition"
 requires-python = ">=3.11"
 dependencies = [
