@@ -9,9 +9,10 @@
 #                    -p 7706:7706 jarvis-whisper-api:rocm
 #
 # Requires an AMD GPU with a ROCm-supported architecture and the AMDGPU kernel
-# driver on the host. ROCm 6.2+ is required for RDNA4 (RX 9070, gfx1200).
+# driver on the host. ROCm 6.3+ is required because current whisper.cpp HIP
+# bindings reference __hip_fp8_e4m3, which only exists in ROCm 6.3+.
 
-FROM rocm/dev-ubuntu-22.04:6.2-complete AS build
+FROM rocm/dev-ubuntu-22.04:6.3-complete AS build
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -84,7 +85,7 @@ COPY pyproject.toml .
 # links against ROCm libs and runs whisper.cpp inference on the GPU. Pinned
 # version matches pyproject.toml.
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/rocm6.2 torch \
+    && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/rocm6.3 torch \
     && AMDGPU_TARGETS="${WHISPER_AMDGPU_TARGETS}" \
        GGML_HIP=1 ROCM_PATH=/opt/rocm \
        pip install --no-cache-dir --no-binary pywhispercpp pywhispercpp==1.4.1 \
