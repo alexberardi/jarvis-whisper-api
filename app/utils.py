@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+from scipy.signal import resample_poly
 
+from app.audio import load_audio
 from app.exceptions import WhisperTranscriptionError
 from app.whisper_engine import get_model
 
@@ -26,6 +29,26 @@ class SpeakerResult:
 
     user_id: int | None
     confidence: float
+
+
+WHISPER_TARGET_SR = 16000
+
+
+def _load_for_whisper(wav_path: str) -> np.ndarray:
+    """Load a WAV as 16 kHz mono float32 ready for pywhispercpp.
+
+    pywhispercpp's Model.transcribe rejects WAV files that aren't already
+    at 16 kHz with `Exception: WAV file must be 16000 Hz`. The old
+    whisper-cli subprocess auto-resampled inside the binary; the
+    in-process call does not. Resample here to restore parity.
+    """
+    audio, sr = load_audio(wav_path)
+    if audio.ndim > 1:
+        audio = audio.mean(axis=1).astype(np.float32)
+    if sr != WHISPER_TARGET_SR:
+        g = math.gcd(sr, WHISPER_TARGET_SR)
+        audio = resample_poly(audio, WHISPER_TARGET_SR // g, sr // g)
+    return np.ascontiguousarray(audio, dtype=np.float32)
 
 
 def run_whisper(
@@ -51,9 +74,10 @@ def run_whisper(
         WhisperTranscriptionError: If transcription fails.
     """
     try:
+        audio = _load_for_whisper(wav_path)
         model = get_model()
         segments = model.transcribe(
-            wav_path,
+            audio,
             language="en",
             initial_prompt=prompt or "",
             temperature=temperature,

@@ -9,6 +9,7 @@ import pytest
 from app.exceptions import WhisperTranscriptionError
 from app.utils import (
     SpeakerResult,
+    _load_for_whisper,
     hash_user_id,
     invalidate_household_cache,
     load_household_profiles,
@@ -143,11 +144,54 @@ class TestInvalidateHouseholdCache:
         invalidate_household_cache("nonexistent-household")
 
 
+class TestLoadForWhisper:
+    """Test the resample/mono helper that feeds pywhispercpp."""
+
+    def _write_wav(self, path: Path, sr: int, channels: int = 1, seconds: float = 0.5) -> None:
+        from scipy.io import wavfile
+        n = int(sr * seconds)
+        # Simple sine so resampling has signal to chew on
+        t = np.linspace(0.0, seconds, n, endpoint=False)
+        sig = (0.5 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
+        if channels == 2:
+            sig = np.stack([sig, sig], axis=1)
+        wavfile.write(str(path), sr, (sig * 32767).astype(np.int16))
+
+    def test_resamples_48khz_to_16khz(self, tmp_path: Path) -> None:
+        wav = tmp_path / "48k.wav"
+        self._write_wav(wav, sr=48000, seconds=1.0)
+
+        out = _load_for_whisper(str(wav))
+
+        assert out.dtype == np.float32
+        assert out.ndim == 1
+        assert abs(len(out) - 16000) < 5  # 1 second @ 16 kHz, ±a sample of slop
+
+    def test_passthrough_at_16khz(self, tmp_path: Path) -> None:
+        wav = tmp_path / "16k.wav"
+        self._write_wav(wav, sr=16000, seconds=0.5)
+
+        out = _load_for_whisper(str(wav))
+
+        assert out.dtype == np.float32
+        assert out.ndim == 1
+        assert abs(len(out) - 8000) < 5  # 0.5 second @ 16 kHz
+
+    def test_mono_mixdown(self, tmp_path: Path) -> None:
+        wav = tmp_path / "stereo.wav"
+        self._write_wav(wav, sr=16000, channels=2, seconds=0.5)
+
+        out = _load_for_whisper(str(wav))
+
+        assert out.ndim == 1
+
+
 class TestRunWhisper:
     """Test run_whisper function."""
 
+    @patch("app.utils._load_for_whisper", return_value=np.zeros(16000, dtype=np.float32))
     @patch("app.utils.get_model")
-    def test_run_whisper_success(self, mock_get_model: MagicMock) -> None:
+    def test_run_whisper_success(self, mock_get_model: MagicMock, mock_load: MagicMock) -> None:
         """run_whisper should join segment texts and return the trimmed result."""
         model = MagicMock()
         model.transcribe.return_value = [_make_segment("Hello "), _make_segment("world")]
@@ -158,9 +202,10 @@ class TestRunWhisper:
         assert result == "Hello  world"
         model.transcribe.assert_called_once()
 
+    @patch("app.utils._load_for_whisper", return_value=np.zeros(16000, dtype=np.float32))
     @patch("app.utils.get_model")
     def test_run_whisper_failure_raises_transcription_error(
-        self, mock_get_model: MagicMock
+        self, mock_get_model: MagicMock, mock_load: MagicMock
     ) -> None:
         """run_whisper should wrap underlying errors in WhisperTranscriptionError."""
         model = MagicMock()
@@ -173,8 +218,9 @@ class TestRunWhisper:
         assert "Model file not found" in str(exc_info.value)
         assert "Model file not found" in (exc_info.value.stderr or "")
 
+    @patch("app.utils._load_for_whisper", return_value=np.zeros(16000, dtype=np.float32))
     @patch("app.utils.get_model")
-    def test_run_whisper_with_prompt(self, mock_get_model: MagicMock) -> None:
+    def test_run_whisper_with_prompt(self, mock_get_model: MagicMock, mock_load: MagicMock) -> None:
         """run_whisper should pass prompt as initial_prompt."""
         model = MagicMock()
         model.transcribe.return_value = [_make_segment("Jarvis turn on lights")]
@@ -186,8 +232,9 @@ class TestRunWhisper:
         kwargs = model.transcribe.call_args.kwargs
         assert kwargs["initial_prompt"] == "Jarvis commands"
 
+    @patch("app.utils._load_for_whisper", return_value=np.zeros(16000, dtype=np.float32))
     @patch("app.utils.get_model")
-    def test_run_whisper_without_prompt(self, mock_get_model: MagicMock) -> None:
+    def test_run_whisper_without_prompt(self, mock_get_model: MagicMock, mock_load: MagicMock) -> None:
         """run_whisper should pass empty initial_prompt when prompt is None."""
         model = MagicMock()
         model.transcribe.return_value = [_make_segment("Hello")]
@@ -198,8 +245,9 @@ class TestRunWhisper:
         kwargs = model.transcribe.call_args.kwargs
         assert kwargs["initial_prompt"] == ""
 
+    @patch("app.utils._load_for_whisper", return_value=np.zeros(16000, dtype=np.float32))
     @patch("app.utils.get_model")
-    def test_run_whisper_with_temperature(self, mock_get_model: MagicMock) -> None:
+    def test_run_whisper_with_temperature(self, mock_get_model: MagicMock, mock_load: MagicMock) -> None:
         """run_whisper should pass temperature to the model."""
         model = MagicMock()
         model.transcribe.return_value = [_make_segment("Hello world")]
@@ -210,8 +258,9 @@ class TestRunWhisper:
         kwargs = model.transcribe.call_args.kwargs
         assert kwargs["temperature"] == 0.3
 
+    @patch("app.utils._load_for_whisper", return_value=np.zeros(16000, dtype=np.float32))
     @patch("app.utils.get_model")
-    def test_run_whisper_with_temperature_inc(self, mock_get_model: MagicMock) -> None:
+    def test_run_whisper_with_temperature_inc(self, mock_get_model: MagicMock, mock_load: MagicMock) -> None:
         """run_whisper should pass temperature_inc to the model."""
         model = MagicMock()
         model.transcribe.return_value = [_make_segment("Hello world")]
@@ -222,8 +271,9 @@ class TestRunWhisper:
         kwargs = model.transcribe.call_args.kwargs
         assert kwargs["temperature_inc"] == 0.1
 
+    @patch("app.utils._load_for_whisper", return_value=np.zeros(16000, dtype=np.float32))
     @patch("app.utils.get_model")
-    def test_run_whisper_with_beam_size(self, mock_get_model: MagicMock) -> None:
+    def test_run_whisper_with_beam_size(self, mock_get_model: MagicMock, mock_load: MagicMock) -> None:
         """run_whisper should pass beam_size inside the beam_search dict."""
         model = MagicMock()
         model.transcribe.return_value = [_make_segment("Hello world")]
@@ -234,8 +284,9 @@ class TestRunWhisper:
         kwargs = model.transcribe.call_args.kwargs
         assert kwargs["beam_search"] == {"beam_size": 3, "patience": -1.0}
 
+    @patch("app.utils._load_for_whisper", return_value=np.zeros(16000, dtype=np.float32))
     @patch("app.utils.get_model")
-    def test_run_whisper_default_params(self, mock_get_model: MagicMock) -> None:
+    def test_run_whisper_default_params(self, mock_get_model: MagicMock, mock_load: MagicMock) -> None:
         """run_whisper should use sane defaults for temperature/beam params."""
         model = MagicMock()
         model.transcribe.return_value = [_make_segment("Hello world")]
@@ -249,8 +300,9 @@ class TestRunWhisper:
         assert kwargs["beam_search"] == {"beam_size": 5, "patience": -1.0}
         assert kwargs["language"] == "en"
 
+    @patch("app.utils._load_for_whisper", return_value=np.zeros(16000, dtype=np.float32))
     @patch("app.utils.get_model")
-    def test_run_whisper_all_params_together(self, mock_get_model: MagicMock) -> None:
+    def test_run_whisper_all_params_together(self, mock_get_model: MagicMock, mock_load: MagicMock) -> None:
         """run_whisper should forward all params together."""
         model = MagicMock()
         model.transcribe.return_value = [_make_segment("Hello world")]
