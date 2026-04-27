@@ -13,6 +13,22 @@ env:
 
 jobs:
   build-and-push:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dockerfile: Dockerfile
+            suffix: ""
+            platforms: linux/amd64,linux/arm64
+            cache_scope: cpu
+          - dockerfile: Dockerfile.gpu
+            suffix: "-cuda"
+            platforms: linux/amd64
+            cache_scope: cuda
+          - dockerfile: Dockerfile.rocm
+            suffix: "-rocm"
+            platforms: linux/amd64
+            cache_scope: rocm
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -63,6 +79,11 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # suffix is appended to every generated tag (e.g. latest, dev, v0.1.5),
+          # giving us latest-cuda / latest-rocm alongside the CPU latest.
+          # onlatest=true forces the suffix onto the literal "latest" tag too.
+          flavor: |
+            suffix=${{ matrix.suffix }},onlatest=true
           tags: |
             # Tag as 'dev' on push to main
             type=raw,value=dev,enable={{is_default_branch}}
@@ -77,17 +98,19 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platforms }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Skip cache on tag pushes — GHA cache can serve stale layers
-          cache-from: ${{ !startsWith(github.ref, 'refs/tags/') && 'type=gha' || '' }}
-          cache-to: type=gha,mode=max
+          # Per-variant cache scope so CPU/CUDA/ROCm builds don't trample each
+          # other's layers. Skip cache-from on tag pushes to avoid stale layers.
+          cache-from: ${{ !startsWith(github.ref, 'refs/tags/') && format('type=gha,scope={0}', matrix.cache_scope) || '' }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.cache_scope }}
 
       - name: Output image tags
         run: |
-          echo "### Docker Image Published 🐳" >> $GITHUB_STEP_SUMMARY
+          echo "### Docker Image Published — ${{ matrix.dockerfile }} 🐳" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Tags:**" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
@@ -99,13 +122,13 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "Pull with:" >> $GITHUB_STEP_SUMMARY
             echo '```bash' >> $GITHUB_STEP_SUMMARY
-            echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:dev" >> $GITHUB_STEP_SUMMARY
+            echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:dev${{ matrix.suffix }}" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
           elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
             echo "🚀 This is a **production** release" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "Pull with:" >> $GITHUB_STEP_SUMMARY
             echo '```bash' >> $GITHUB_STEP_SUMMARY
-            echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_STEP_SUMMARY
+            echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest${{ matrix.suffix }}" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
           fi
