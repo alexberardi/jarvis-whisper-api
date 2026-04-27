@@ -1,0 +1,100 @@
+# AMD ROCm variant: same service, HIP/ROCm-enabled torch + whisper.cpp built with HIP.
+# Builds an image that runs resemblyzer (speaker recognition) on AMD GPUs via ROCm,
+# matching the CUDA variant's feature set for AMD hosts. On a single-GPU host this
+# shaves the same ~5-9s off transcription that CUDA does vs the slim CPU image.
+#
+# Build:  docker build -f Dockerfile.rocm -t jarvis-whisper-api:rocm .
+# Run:    docker run --device=/dev/dri --device=/dev/kfd \
+#                    --group-add video --group-add render \
+#                    -p 7706:7706 jarvis-whisper-api:rocm
+#
+# Requires an AMD GPU with a ROCm-supported architecture and the AMDGPU kernel
+# driver on the host. ROCm 6.2+ is required for RDNA4 (RX 9070, gfx1200).
+
+FROM rocm/dev-ubuntu-22.04:6.2-complete AS build
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    ROCM_PATH=/opt/rocm \
+    HIP_PATH=/opt/rocm \
+    PATH=/opt/rocm/bin:/opt/rocm/llvm/bin:${PATH} \
+    LD_LIBRARY_PATH=/opt/rocm/lib:${LD_LIBRARY_PATH}
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    git \
+    wget \
+    pkg-config \
+    libopenblas-dev \
+    libsndfile1 \
+    ffmpeg \
+    curl \
+    python3.11 \
+    python3.11-venv \
+    python3.11-dev \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
+
+WORKDIR /app
+
+# Build whisper.cpp with HIP (GPU-accelerated transcription on AMD).
+#
+# WHISPER_AMDGPU_TARGETS: AMDGPU arch list (semicolon-separated). Defaults cover
+# RDNA2/3/4 consumer cards:
+#     gfx1030  RX 6800 / 6900 (RDNA2)
+#     gfx1100  RX 7900 (RDNA3 N31)
+#     gfx1101  RX 7800 (RDNA3 N32)
+#     gfx1102  RX 7700 / 7600 (RDNA3 N33)
+#     gfx1200  RX 9070 (RDNA4) — needs ROCm 6.2+
+#   Override at build time:  --build-arg WHISPER_AMDGPU_TARGETS=gfx1100
+#
+# We build only the whisper-cli target (skip whisper-bench) for parity with the
+# CUDA Dockerfile and to avoid pulling in optional examples.
+ARG WHISPER_MODEL_NAME=base.en
+ARG WHISPER_AMDGPU_TARGETS="gfx1030;gfx1100;gfx1101;gfx1102;gfx1200"
+RUN git clone https://github.com/ggerganov/whisper.cpp.git /root/whisper.cpp \
+    && cd /root/whisper.cpp \
+    && bash ./models/download-ggml-model.sh ${WHISPER_MODEL_NAME} \
+    && cmake -B build \
+        -DGGML_HIP=ON \
+        -DAMDGPU_TARGETS="${WHISPER_AMDGPU_TARGETS}" \
+        -DCMAKE_C_COMPILER=/opt/rocm/llvm/bin/clang \
+        -DCMAKE_CXX_COMPILER=/opt/rocm/llvm/bin/clang++ \
+        -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
+        -DCMAKE_INSTALL_RPATH=/opt/rocm/lib:/usr/local/lib \
+    && cmake --build build --config Release --target whisper-cli -j$(nproc) \
+    && cp build/bin/whisper-cli /usr/local/bin/whisper-cli \
+    && find build -name 'lib*.so*' -exec cp {} /usr/local/lib/ \; \
+    && ldconfig
+
+COPY app /app/app
+COPY pyproject.toml .
+
+# Install ROCm-enabled torch wheel BEFORE installing the project, so resemblyzer's
+# torch dep doesn't pull the CPU wheel. torch+ROCm exposes the HIP backend through
+# the torch.cuda API (CUDA-compatible), so JARVIS_VOICE_DEVICE=cuda still selects
+# the GPU at runtime.
+#
+# pywhispercpp ships CPU-only wheels on PyPI. Force a source build with HIP so it
+# links against ROCm libs and runs whisper.cpp inference on the GPU. Pinned
+# version matches pyproject.toml.
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/rocm6.2 torch \
+    && AMDGPU_TARGETS="${WHISPER_AMDGPU_TARGETS}" \
+       GGML_HIP=1 ROCM_PATH=/opt/rocm \
+       pip install --no-cache-dir --no-binary pywhispercpp pywhispercpp==1.4.1 \
+    && pip install --no-cache-dir .
+
+ENV PORT=7706 \
+    WHISPER_MODEL=/root/whisper.cpp/models/ggml-base.en.bin \
+    WHISPER_CLI=/usr/local/bin/whisper-cli \
+    JARVIS_VOICE_DEVICE=cuda
+
+EXPOSE 7706
+
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT}
