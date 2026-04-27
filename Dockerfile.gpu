@@ -96,6 +96,19 @@ RUN pip install --no-cache-dir --upgrade pip \
        GGML_CUDA=1 pip install --no-cache-dir --no-binary pywhispercpp pywhispercpp==1.4.1 \
     && pip install --no-cache-dir .
 
+# pywhispercpp's wheel-repair step bundles a hash-renamed copy of the
+# CUDA driver stub (libcuda-<hash>.so) inside the wheel. The renamed
+# stub exports cuDeviceGet et al. but isn't a real driver, so any actual
+# CUDA call fails at runtime ("cuDeviceGet(&device, id)" → CUDA error).
+# Replace it with a dangling symlink to the real driver lib that
+# nvidia-container-toolkit injects at /usr/lib/x86_64-linux-gnu/libcuda.so.1
+# at container start. The link resolves at load-time, so libggml-cuda
+# picks up the real driver via its bundled NEEDED entry.
+RUN set -e; \
+    for f in /usr/local/lib/python3.11/dist-packages/pywhispercpp.libs/libcuda-*.so; do \
+      ln -sf /usr/lib/x86_64-linux-gnu/libcuda.so.1 "$f"; \
+    done
+
 ENV PORT=7706 \
     WHISPER_MODEL=/root/whisper.cpp/models/ggml-base.en.bin \
     WHISPER_CLI=/usr/local/bin/whisper-cli \
