@@ -80,9 +80,20 @@ COPY pyproject.toml .
 # pywhispercpp ships CPU-only wheels on PyPI. Force a source build with
 # GGML_CUDA=1 so it links against the system CUDA libs and runs whisper.cpp
 # inference on the GPU. Pinned version matches pyproject.toml.
+#
+# LD_LIBRARY_PATH points at the CUDA stubs dir so pywhispercpp's wheel-repair
+# step (auditwheel-style) can resolve libcuda.so.1. The real driver lib is
+# only present at runtime via nvidia-container-toolkit; the stub at
+# /usr/local/cuda/lib64/stubs/libcuda.so.1 (symlinked above) is sufficient
+# for the build-time bundling.
+#
+# CMAKE_CUDA_ARCHITECTURES forces the compute capability instead of nvcc's
+# `-arch=native`, which fails inside a Docker build (no GPU visible).
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu124 torch \
-    && GGML_CUDA=1 pip install --no-cache-dir --no-binary pywhispercpp pywhispercpp==1.4.1 \
+    && LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH} \
+       CMAKE_CUDA_ARCHITECTURES=${WHISPER_CUDA_ARCH} \
+       GGML_CUDA=1 pip install --no-cache-dir --no-binary pywhispercpp pywhispercpp==1.4.1 \
     && pip install --no-cache-dir .
 
 ENV PORT=7706 \
