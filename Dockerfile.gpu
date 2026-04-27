@@ -76,8 +76,13 @@ COPY pyproject.toml .
 
 # Install CUDA-enabled torch wheel BEFORE installing the project, so
 # resemblyzer's torch dep doesn't pull the CPU wheel.
+#
+# pywhispercpp ships CPU-only wheels on PyPI. Force a source build with
+# GGML_CUDA=1 so it links against the system CUDA libs and runs whisper.cpp
+# inference on the GPU. Pinned version matches pyproject.toml.
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu124 torch \
+    && GGML_CUDA=1 pip install --no-cache-dir --no-binary pywhispercpp pywhispercpp==1.4.1 \
     && pip install --no-cache-dir .
 
 ENV PORT=7706 \

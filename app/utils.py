@@ -3,14 +3,13 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-import shutil
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
 from app.exceptions import WhisperTranscriptionError
+from app.whisper_engine import get_model
 
 try:
     from resemblyzer import VoiceEncoder, preprocess_wav
@@ -28,37 +27,6 @@ class SpeakerResult:
     user_id: int | None
     confidence: float
 
-WHISPER_MODEL = os.getenv(
-    "WHISPER_MODEL",
-    os.path.expanduser("~/whisper.cpp/models/ggml-base.en.bin"),
-)
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-_LOCAL_WHISPER_CLI = _REPO_ROOT / "bin" / "whisper-cli"
-WHISPER_CLI = os.getenv("WHISPER_CLI")
-
-
-def _resolve_whisper_cli() -> str:
-    if WHISPER_CLI:
-        return WHISPER_CLI
-
-    system_cli = shutil.which("whisper-cli")
-    if system_cli:
-        return system_cli
-
-    if _LOCAL_WHISPER_CLI.exists():
-        return str(_LOCAL_WHISPER_CLI)
-
-    return "whisper-cli"
-
-
-def _build_subprocess_env(cli_path: str) -> dict[str, str]:
-    env = os.environ.copy()
-    if cli_path == str(_LOCAL_WHISPER_CLI):
-        bin_dir = str(_LOCAL_WHISPER_CLI.parent)
-        existing = env.get("LD_LIBRARY_PATH", "")
-        env["LD_LIBRARY_PATH"] = f"{bin_dir}:{existing}" if existing else bin_dir
-    return env
-
 
 def run_whisper(
     wav_path: str,
@@ -67,7 +35,7 @@ def run_whisper(
     temperature_inc: float = 0.2,
     beam_size: int = 5,
 ) -> str:
-    """Run whisper-cli to transcribe audio.
+    """Transcribe audio using the in-process whisper.cpp model.
 
     Args:
         wav_path: Path to WAV file to transcribe.
@@ -82,46 +50,23 @@ def run_whisper(
     Raises:
         WhisperTranscriptionError: If transcription fails.
     """
-    cli_path = _resolve_whisper_cli()
-    env = _build_subprocess_env(cli_path)
-
-    args = [
-        cli_path,
-        "-m",
-        WHISPER_MODEL,
-        "-f",
-        wav_path,
-        "--language",
-        "en",
-        "--output-txt",
-        "--temperature",
-        str(temperature),
-        "--temperature-inc",
-        str(temperature_inc),
-        "--beam-size",
-        str(beam_size),
-    ]
-
-    if prompt:
-        args.extend(["--prompt", prompt])
-
-    result = subprocess.run(
-        args,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-
-    if result.returncode != 0:
-        raise WhisperTranscriptionError(
-            f"Whisper transcription failed with exit code {result.returncode}",
-            stderr=result.stderr,
+    try:
+        model = get_model()
+        segments = model.transcribe(
+            wav_path,
+            language="en",
+            initial_prompt=prompt or "",
+            temperature=temperature,
+            temperature_inc=temperature_inc,
+            beam_search={"beam_size": beam_size, "patience": -1.0},
         )
+    except Exception as e:
+        raise WhisperTranscriptionError(
+            f"Whisper transcription failed: {type(e).__name__}: {e}",
+            stderr=str(e),
+        ) from e
 
-    # Read the output .txt file
-    txt_path = f"{wav_path}.txt"
-    with open(txt_path) as f:
-        return f.read().strip()
+    return " ".join(seg.text for seg in segments).strip()
 
 
 PROFILE_DIR = Path("voice_profiles")

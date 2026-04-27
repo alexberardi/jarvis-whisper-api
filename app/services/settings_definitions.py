@@ -18,15 +18,6 @@ SETTINGS_DEFINITIONS: list[SettingDefinition] = [
         requires_reload=True,
     ),
     SettingDefinition(
-        key="whisper.cli_path",
-        category="whisper.model",
-        value_type="string",
-        default="",
-        description="Path to whisper-cli binary (auto-detected if empty)",
-        env_fallback="WHISPER_CLI",
-        requires_reload=True,
-    ),
-    SettingDefinition(
         key="whisper.enable_cuda",
         category="whisper.model",
         value_type="bool",
