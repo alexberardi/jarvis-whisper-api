@@ -17,16 +17,6 @@ SETTINGS_DEFINITIONS: list[SettingDefinition] = [
         env_fallback="WHISPER_MODEL",
         requires_reload=True,
     ),
-    SettingDefinition(
-        key="whisper.enable_cuda",
-        category="whisper.model",
-        value_type="bool",
-        default=False,
-        description="Enable CUDA acceleration for whisper.cpp",
-        env_fallback="WHISPER_ENABLE_CUDA",
-        requires_reload=True,
-    ),
-
     # Transcription parameters
     SettingDefinition(
         key="whisper.default_temperature",
