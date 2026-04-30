@@ -72,6 +72,8 @@ RUN git clone https://github.com/ggerganov/whisper.cpp.git /root/whisper.cpp \
     && ldconfig
 
 COPY app /app/app
+COPY alembic /app/alembic
+COPY alembic.ini /app/alembic.ini
 COPY pyproject.toml .
 
 # Install CUDA-enabled torch wheel BEFORE installing the project, so
