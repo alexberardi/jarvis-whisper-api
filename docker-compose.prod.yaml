@@ -10,6 +10,8 @@ services:
       - "${PORT:-7706}:${PORT:-7706}"
     env_file:
       - .env
+    volumes:
+      - whisper-voice-profiles:/app/voice_profiles
     environment:
       - PYTHONUNBUFFERED=1
     restart: unless-stopped
@@ -19,3 +21,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+
+
+volumes:
+  whisper-voice-profiles:
