@@ -2,7 +2,11 @@ version: '3.9'
 
 services:
   jarvis-whisper:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+      args:
+        WHISPER_CUDA_ARCH: ${WHISPER_CUDA_ARCH:-86}
     ports:
       - "${PORT:-7706}:${PORT:-7706}"
     volumes:
@@ -13,10 +17,19 @@ services:
       - ../jarvis-auth-client:/app/jarvis-auth-client
       - ../jarvis-settings-client:/app/jarvis-settings-client
       - ~/whisper.cpp:/root/whisper.cpp:ro
+      - whisper-voice-profiles:/app/voice_profiles
     env_file:
       - .env
     environment:
       - PYTHONUNBUFFERED=1
+      - JARVIS_VOICE_DEVICE=cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     extra_hosts:
       - "${DOCKER_HOST_ALIAS:-host.docker.internal}:host-gateway"
     command: >
@@ -41,3 +54,4 @@ services:
 
 volumes:
   whisper-pg-data:
+  whisper-voice-profiles:
