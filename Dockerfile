@@ -28,6 +28,8 @@ RUN git clone https://github.com/ggerganov/whisper.cpp.git /root/whisper.cpp && 
 
 # Copy application
 COPY app /app/app
+COPY alembic /app/alembic
+COPY alembic.ini /app/alembic.ini
 
 # Install Python dependencies
 COPY pyproject.toml .
