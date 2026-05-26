@@ -344,48 +344,47 @@ class TestRecognizeSpeaker:
         assert result.confidence == 0.0
 
     @patch("app.utils.load_household_profiles")
-    @patch("app.utils.preprocess_wav")
     @patch("app.utils._get_encoder")
     def test_recognize_speaker_matches_correct_user(
-        self, mock_encoder: MagicMock, mock_preprocess: MagicMock, mock_load: MagicMock
+        self, mock_encoder: MagicMock, mock_load: MagicMock
     ) -> None:
         """recognize_speaker should return matched user_id above threshold."""
         mock_load.return_value = {42: np.array([1.0, 0.0, 0.0])}
-        mock_preprocess.return_value = np.array([1.0])
-        # Return embedding very similar to user 42's profile
-        mock_encoder.return_value.embed_utterance.return_value = np.array([0.95, 0.0, 0.0])
+        # Return embedding very similar to user 42's profile via the
+        # encoder facade introduced in Phase 2a.
+        mock_encoder.return_value.embed.return_value = np.array([0.95, 0.0, 0.0])
 
-        result = recognize_speaker("/tmp/test.wav", "household-1", [42])
+        # Explicit threshold pins the assertion regardless of any future
+        # length-adaptive default tweaks.
+        result = recognize_speaker("/tmp/test.wav", "household-1", [42], threshold=0.5)
 
         assert result.user_id == 42
-        assert result.confidence > 0.75
+        assert result.confidence > 0.5
 
     @patch("app.utils.load_household_profiles")
-    @patch("app.utils.preprocess_wav")
     @patch("app.utils._get_encoder")
     def test_recognize_speaker_below_threshold_returns_none(
-        self, mock_encoder: MagicMock, mock_preprocess: MagicMock, mock_load: MagicMock
+        self, mock_encoder: MagicMock, mock_load: MagicMock
     ) -> None:
         """recognize_speaker should return None user_id when below threshold."""
         mock_load.return_value = {42: np.array([1.0, 0.0, 0.0])}
-        mock_preprocess.return_value = np.array([1.0])
-        # Return embedding very different from user's profile
-        mock_encoder.return_value.embed_utterance.return_value = np.array([0.0, 1.0, 0.0])
+        # Embedding orthogonal to the profile → cosine ~0.0
+        mock_encoder.return_value.embed.return_value = np.array([0.0, 1.0, 0.0])
 
-        result = recognize_speaker("/tmp/test.wav", "household-1", [42])
+        result = recognize_speaker("/tmp/test.wav", "household-1", [42], threshold=0.5)
 
         assert result.user_id is None
         # Confidence should still be reported (the best score found)
-        assert result.confidence < 0.75
+        assert result.confidence < 0.5
 
     @patch("app.utils.load_household_profiles")
-    @patch("app.utils.preprocess_wav")
+    @patch("app.utils._get_encoder")
     def test_recognize_speaker_processing_error(
-        self, mock_preprocess: MagicMock, mock_load: MagicMock
+        self, mock_encoder: MagicMock, mock_load: MagicMock
     ) -> None:
         """recognize_speaker should return None user_id on processing error."""
         mock_load.return_value = {1: np.array([1.0, 0.0, 0.0])}
-        mock_preprocess.side_effect = RuntimeError("Audio file corrupted")
+        mock_encoder.return_value.embed.side_effect = RuntimeError("Audio file corrupted")
 
         result = recognize_speaker("/tmp/test.wav", "household-1", [1])
 
@@ -393,32 +392,31 @@ class TestRecognizeSpeaker:
         assert result.confidence == 0.0
 
     @patch("app.utils.load_household_profiles")
-    @patch("app.utils.preprocess_wav")
     @patch("app.utils._get_encoder")
     def test_recognize_speaker_custom_threshold(
-        self, mock_encoder: MagicMock, mock_preprocess: MagicMock, mock_load: MagicMock
+        self, mock_encoder: MagicMock, mock_load: MagicMock
     ) -> None:
-        """recognize_speaker should respect custom threshold."""
+        """recognize_speaker should respect explicit threshold override."""
         mock_load.return_value = {99: np.array([1.0, 0.0, 0.0])}
-        mock_preprocess.return_value = np.array([1.0])
-        # Return embedding with 0.8 similarity
-        mock_encoder.return_value.embed_utterance.return_value = np.array([0.8, 0.6, 0.0])
+        # Embedding has 0.8 cosine similarity to user 99's profile
+        mock_encoder.return_value.embed.return_value = np.array([0.8, 0.6, 0.0])
 
-        # With default threshold (0.75), should match
-        result_default = recognize_speaker("/tmp/test.wav", "household-1", [99])
-        assert result_default.user_id == 99
+        # With threshold 0.5, should match
+        result_lenient = recognize_speaker(
+            "/tmp/test.wav", "household-1", [99], threshold=0.5
+        )
+        assert result_lenient.user_id == 99
 
-        # With higher threshold (0.9), should not match
+        # With higher threshold 0.9, should not match
         result_strict = recognize_speaker(
             "/tmp/test.wav", "household-1", [99], threshold=0.9
         )
         assert result_strict.user_id is None
 
     @patch("app.utils.load_household_profiles")
-    @patch("app.utils.preprocess_wav")
     @patch("app.utils._get_encoder")
     def test_recognize_speaker_multiple_users_best_match(
-        self, mock_encoder: MagicMock, mock_preprocess: MagicMock, mock_load: MagicMock
+        self, mock_encoder: MagicMock, mock_load: MagicMock
     ) -> None:
         """recognize_speaker should return best matching user among multiple."""
         mock_load.return_value = {
@@ -426,11 +424,10 @@ class TestRecognizeSpeaker:
             2: np.array([0.0, 1.0, 0.0]),
             3: np.array([0.0, 0.0, 1.0]),
         }
-        mock_preprocess.return_value = np.array([1.0])
-        # Return embedding most similar to user 2's profile
-        mock_encoder.return_value.embed_utterance.return_value = np.array([0.1, 0.95, 0.1])
+        # Embedding most similar to user 2's profile
+        mock_encoder.return_value.embed.return_value = np.array([0.1, 0.95, 0.1])
 
-        result = recognize_speaker("/tmp/test.wav", "household-1", [1, 2, 3])
+        result = recognize_speaker("/tmp/test.wav", "household-1", [1, 2, 3], threshold=0.5)
 
         assert result.user_id == 2
-        assert result.confidence > 0.75
+        assert result.confidence > 0.5

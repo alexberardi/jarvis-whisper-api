@@ -125,6 +125,7 @@ def health():
 @app.post("/transcribe")
 async def transcribe(
     file: UploadFile = File(...),
+    speaker_audio: UploadFile | None = File(default=None),
     prompt: str | None = Query(default=None, description="Initial prompt to guide transcription"),
     preprocess: bool = Query(default=False, description="Apply audio normalization and silence trimming"),
     temperature: float = Query(default=0.0, ge=0.0, le=1.0, description="Initial temperature for sampling (0.0-1.0)"),
@@ -132,6 +133,20 @@ async def transcribe(
     beam_size: int = Query(default=5, ge=1, le=16, description="Beam size for beam search (1-16)"),
     auth: AppAuthResult = Depends(verify_app_auth),
 ):
+    """Transcribe audio + (optionally) identify the speaker.
+
+    Args:
+        file: Required. The audio to transcribe (typically the user's
+            command utterance after wake-word).
+        speaker_audio: Optional. When provided, this audio is used for
+            **speaker recognition only** while ``file`` is still used for
+            transcription. Lets the caller concatenate wake-word audio in
+            front of a short command (e.g. "delete it") so the speaker
+            pass has enough signal even when the transcribed utterance is
+            sub-1-second. Passing wake-word audio in ``file`` itself
+            would confuse Whisper's text output, so it's a separate
+            stream.
+    """
     logger.debug(
         f"Transcription request from {auth.app.app_id} "
         f"for household {auth.context.household_id}, node {auth.context.node_id}"
@@ -141,6 +156,12 @@ async def transcribe(
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         shutil.copyfileobj(file.file, tmp)
         tmp_path = tmp.name
+
+    speaker_audio_path: str | None = None
+    if speaker_audio is not None:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_sp:
+            shutil.copyfileobj(speaker_audio.file, tmp_sp)
+            speaker_audio_path = tmp_sp.name
     t_saved = time.perf_counter()
 
     processed_path: str | None = None
@@ -174,10 +195,13 @@ async def transcribe(
         speaker_enabled = os.getenv("USE_VOICE_RECOGNITION", "false").lower() == "true"
 
         if speaker_enabled:
-            # Use original file for speaker recognition (raw audio may be better)
+            # Use the dedicated speaker-pass audio if the caller supplied one
+            # (typically wake-word + command, for better short-clip recognition);
+            # otherwise fall back to the transcription audio.
+            speaker_input_path = speaker_audio_path or tmp_path
             # household_member_ids comes from context headers, passed by command-center
             speaker_result = recognize_speaker(
-                tmp_path,
+                speaker_input_path,
                 household_id=auth.context.household_id or "",
                 member_ids=auth.context.household_member_ids,
             )
@@ -185,6 +209,13 @@ async def transcribe(
                 "user_id": speaker_result.user_id,
                 "confidence": speaker_result.confidence,
             }
+            logger.info(
+                "Speaker match: user_id=%s confidence=%.3f node=%s household=%s",
+                speaker_result.user_id,
+                speaker_result.confidence,
+                auth.context.node_id,
+                auth.context.household_id,
+            )
         t_speaker = time.perf_counter()
 
         logger.info(
@@ -219,6 +250,8 @@ async def transcribe(
             os.remove(tmp_path)
         if os.path.exists(f"{tmp_path}.txt"):
             os.remove(f"{tmp_path}.txt")
+        if speaker_audio_path and os.path.exists(speaker_audio_path):
+            os.remove(speaker_audio_path)
         if processed_path:
             if os.path.exists(processed_path):
                 os.remove(processed_path)
