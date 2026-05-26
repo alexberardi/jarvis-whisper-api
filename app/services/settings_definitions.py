@@ -57,16 +57,74 @@ SETTINGS_DEFINITIONS: list[SettingDefinition] = [
         category="voice",
         value_type="bool",
         default=False,
-        description="Enable speaker identification using resemblyzer",
+        description="Enable speaker identification",
         env_fallback="USE_VOICE_RECOGNITION",
+    ),
+    SettingDefinition(
+        key="voice.encoder",
+        category="voice",
+        value_type="string",
+        default="ecapa",
+        description=(
+            "Speaker recognition encoder. 'ecapa' (SpeechBrain ECAPA-TDNN) is "
+            "the modern default, better on short utterances. 'resemblyzer' is "
+            "the legacy GE2E encoder, kept as a rollback option."
+        ),
+        env_fallback="VOICE_ENCODER",
+        options=["ecapa", "resemblyzer"],
     ),
     SettingDefinition(
         key="voice.similarity_threshold",
         category="voice",
         value_type="float",
-        default=0.75,
-        description="Cosine similarity threshold for speaker matching",
+        default=0.5,
+        description=(
+            "Cosine similarity threshold for speaker matching on "
+            "normal-length utterances (between voice.short_cutoff_seconds "
+            "and voice.long_cutoff_seconds). Optimal value depends on the "
+            "encoder — ECAPA typically wants ~0.50, resemblyzer ~0.75. "
+            "Tune empirically using scripts/benchmark_speaker_encoders.py."
+        ),
         env_fallback="VOICE_SIMILARITY_THRESHOLD",
+    ),
+    SettingDefinition(
+        key="voice.threshold_short",
+        category="voice",
+        value_type="float",
+        default=0.65,
+        description=(
+            "Stricter threshold applied to short clips (duration < "
+            "voice.short_cutoff_seconds). Defaults assume ECAPA; tune via "
+            "the benchmark script."
+        ),
+        env_fallback="VOICE_THRESHOLD_SHORT",
+    ),
+    SettingDefinition(
+        key="voice.threshold_long",
+        category="voice",
+        value_type="float",
+        default=0.4,
+        description=(
+            "Relaxed threshold applied to long clips (duration > "
+            "voice.long_cutoff_seconds). Defaults assume ECAPA."
+        ),
+        env_fallback="VOICE_THRESHOLD_LONG",
+    ),
+    SettingDefinition(
+        key="voice.short_cutoff_seconds",
+        category="voice",
+        value_type="float",
+        default=1.0,
+        description="Clips shorter than this use voice.threshold_short.",
+        env_fallback="VOICE_SHORT_CUTOFF_SECONDS",
+    ),
+    SettingDefinition(
+        key="voice.long_cutoff_seconds",
+        category="voice",
+        value_type="float",
+        default=3.0,
+        description="Clips longer than this use voice.threshold_long.",
+        env_fallback="VOICE_LONG_CUTOFF_SECONDS",
     ),
 
     # Server configuration

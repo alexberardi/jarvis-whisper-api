@@ -49,7 +49,7 @@ def _wav_bytes() -> bytes:
 
 
 class TestEnrollVoiceProfile:
-    def test_enroll_creates_file(self, client, temp_profile_dir):
+    def test_enroll_creates_sample_in_user_dir(self, client, temp_profile_dir):
         response = client.post(
             "/voice-profiles/enroll",
             params={"user_id": 42, "household_id": "h1"},
@@ -59,25 +59,71 @@ class TestEnrollVoiceProfile:
         body = response.json()
         assert body["status"] == "enrolled"
         assert body["user_id"] == 42
+        assert body["sample_index"] == 0
+        assert body["total_samples"] == 1
 
-        # Verify file exists
-        expected_path = temp_profile_dir / "h1" / (hash_user_id(42) + ".wav")
+        # File should land in the per-user directory at sample_000.wav
+        expected_path = temp_profile_dir / "h1" / hash_user_id(42) / "sample_000.wav"
         assert expected_path.exists()
 
-    def test_enroll_overwrites_existing(self, client, temp_profile_dir):
-        # Enroll twice
-        for _ in range(2):
+    def test_enroll_appends_additional_samples(self, client, temp_profile_dir):
+        # Three takes
+        for i in range(3):
             response = client.post(
                 "/voice-profiles/enroll",
                 params={"user_id": 42, "household_id": "h1"},
                 files={"file": ("voice.wav", _wav_bytes(), "audio/wav")},
             )
             assert response.status_code == 200
+            assert response.json()["sample_index"] == i
 
-        # Should only have one file
-        h_dir = temp_profile_dir / "h1"
-        wav_files = list(h_dir.glob("*.wav"))
-        assert len(wav_files) == 1
+        user_dir = temp_profile_dir / "h1" / hash_user_id(42)
+        samples = sorted(user_dir.glob("sample_*.wav"))
+        assert [p.name for p in samples] == [
+            "sample_000.wav",
+            "sample_001.wav",
+            "sample_002.wav",
+        ]
+
+    def test_enroll_with_explicit_index_overwrites(self, client, temp_profile_dir):
+        # First take
+        client.post(
+            "/voice-profiles/enroll",
+            params={"user_id": 42, "household_id": "h1"},
+            files={"file": ("voice.wav", _wav_bytes(), "audio/wav")},
+        )
+        # Overwrite sample 0
+        response = client.post(
+            "/voice-profiles/enroll",
+            params={"user_id": 42, "household_id": "h1", "sample_index": 0},
+            files={"file": ("voice.wav", _wav_bytes(), "audio/wav")},
+        )
+        assert response.json()["sample_index"] == 0
+        user_dir = temp_profile_dir / "h1" / hash_user_id(42)
+        assert sorted(p.name for p in user_dir.glob("sample_*.wav")) == ["sample_000.wav"]
+
+    def test_legacy_single_file_migrated_on_new_enroll(self, client, temp_profile_dir):
+        # Seed a legacy single-file profile
+        household_dir = temp_profile_dir / "h1"
+        household_dir.mkdir(parents=True, exist_ok=True)
+        legacy = household_dir / (hash_user_id(42) + ".wav")
+        legacy.write_bytes(_wav_bytes())
+
+        # New enrollment should migrate the legacy file to sample_000 and
+        # land the new take at sample_001.
+        response = client.post(
+            "/voice-profiles/enroll",
+            params={"user_id": 42, "household_id": "h1"},
+            files={"file": ("voice.wav", _wav_bytes(), "audio/wav")},
+        )
+        body = response.json()
+        assert body["sample_index"] == 1
+        assert body["total_samples"] == 2
+
+        user_dir = household_dir / hash_user_id(42)
+        assert (user_dir / "sample_000.wav").exists()
+        assert (user_dir / "sample_001.wav").exists()
+        assert not legacy.exists()  # migrated away
 
 
 class TestDeleteVoiceProfile:

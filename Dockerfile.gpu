@@ -92,7 +92,7 @@ COPY pyproject.toml .
 # CMAKE_CUDA_ARCHITECTURES forces the compute capability instead of nvcc's
 # `-arch=native`, which fails inside a Docker build (no GPU visible).
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu124 torch \
+    && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu124 torch torchaudio \
     && LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH} \
        CMAKE_CUDA_ARCHITECTURES=${WHISPER_CUDA_ARCH} \
        GGML_CUDA=1 pip install --no-cache-dir --no-binary pywhispercpp pywhispercpp==1.4.1 \

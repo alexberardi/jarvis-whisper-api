@@ -15,6 +15,7 @@ dependencies = [
     "python-multipart",
     "pywhispercpp==1.4.1",
     "resemblyzer",
+    "speechbrain>=1.0.0",
     "python-dotenv",
     "httpx",
     "scipy",
