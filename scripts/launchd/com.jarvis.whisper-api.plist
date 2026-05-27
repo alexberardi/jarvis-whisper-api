@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jarvis.whisper-api</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__ROOT__/run-prod-native.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__ROOT__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>ENV_FILE</key>
+        <string>__ENV_FILE__</string>
+        <key>SERVER_HOST</key>
+        <string>0.0.0.0</string>
+        <key>PORT</key>
+        <string>__PORT__</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>15</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/__USER__/Library/Logs/jarvis-whisper-api/out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/__USER__/Library/Logs/jarvis-whisper-api/err.log</string>
+</dict>
+</plist>
