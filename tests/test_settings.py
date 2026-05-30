@@ -181,10 +181,28 @@ class TestSettingsServiceTypedGetters:
             setting_model=None,
         )
 
-    def test_get_bool(self, service):
-        """Test get_bool method."""
-        with patch.dict(os.environ, {"USE_VOICE_RECOGNITION": "true"}):
-            result = service.get_bool("voice.recognition_enabled", False)
+    def test_get_bool(self):
+        """Test get_bool method.
+
+        Uses an inline definition with env_fallback so this test stays
+        decoupled from whisper's own settings (which now read DB-only).
+        """
+        bool_service = SettingsService(
+            definitions=[
+                SettingDefinition(
+                    key="test.bool_flag",
+                    category="test",
+                    value_type="bool",
+                    default=False,
+                    description="Test bool flag",
+                    env_fallback="TEST_BOOL_FLAG",
+                ),
+            ],
+            get_db_session=lambda: None,
+            setting_model=None,
+        )
+        with patch.dict(os.environ, {"TEST_BOOL_FLAG": "true"}):
+            result = bool_service.get_bool("test.bool_flag", False)
             assert result is True
             assert isinstance(result, bool)
 

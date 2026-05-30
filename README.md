@@ -12,8 +12,9 @@ A Linux-friendly REST API wrapper for `whisper.cpp` with optional speaker recogn
 - `WHISPER_MODEL`: path to a GGML model file (default: `~/whisper.cpp/models/ggml-base.en.bin`)
 - `WHISPER_CLI`: optional path to `whisper-cli` (useful if not on `PATH`)
 - `WHISPER_ENABLE_CUDA`: set to `true` or `1` to build with CUDA
-- `USE_VOICE_RECOGNITION`: set to `true` to enable speaker recognition
 - `PORT`: override the default port (7706)
+
+Speaker recognition is toggled via the DB setting `voice.recognition_enabled` (admin UI or `PUT /settings/voice.recognition_enabled`), not an env var.
 
 ## Production
 ```bash

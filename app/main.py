@@ -97,7 +97,7 @@ async def startup_event():
     # Pre-warm VoiceEncoder if speaker recognition is on, so the first
     # transcription request doesn't pay the ~5-7s CUDA-init + model→GPU
     # cold-start cost. Failure is non-fatal — first request will pay it.
-    if os.getenv("USE_VOICE_RECOGNITION", "false").lower() == "true":
+    if get_settings_service().get_bool("voice.recognition_enabled", False):
         try:
             from app.utils import _get_encoder
             t0 = time.perf_counter()
@@ -192,7 +192,7 @@ async def transcribe(
         logger.info(f"Transcribed {len(text)} chars for node {auth.context.node_id}")
 
         speaker_response: dict[str, int | float | None] = {"user_id": None, "confidence": 0.0}
-        speaker_enabled = os.getenv("USE_VOICE_RECOGNITION", "false").lower() == "true"
+        speaker_enabled = get_settings_service().get_bool("voice.recognition_enabled", False)
 
         if speaker_enabled:
             # Use the dedicated speaker-pass audio if the caller supplied one
