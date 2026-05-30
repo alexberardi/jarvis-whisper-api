@@ -107,6 +107,31 @@ class TestEncoderFallback:
             _get_encoder()
 
 
+class TestDesiredEncoderName:
+    def test_reads_voice_encoder_from_settings(self, monkeypatch):
+        class _FakeSvc:
+            def get_string(self, key, default):
+                assert key == "voice.encoder"
+                return "resemblyzer"
+
+        monkeypatch.setattr(
+            "app.services.settings_service.get_settings_service",
+            lambda: _FakeSvc(),
+        )
+        assert utils_mod._desired_encoder_name() == "resemblyzer"
+
+    def test_falls_back_to_ecapa_when_setting_blank(self, monkeypatch):
+        class _FakeSvc:
+            def get_string(self, key, default):
+                return ""
+
+        monkeypatch.setattr(
+            "app.services.settings_service.get_settings_service",
+            lambda: _FakeSvc(),
+        )
+        assert utils_mod._desired_encoder_name() == "ecapa"
+
+
 class TestLengthAdaptiveThreshold:
     def test_short_clip_uses_short_threshold(self, monkeypatch):
         # Drive _pick_threshold through a fake settings service that returns
