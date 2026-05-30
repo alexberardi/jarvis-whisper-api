@@ -228,7 +228,7 @@ def _load_ecapa_encoder(device: str) -> SpeakerEncoder:
 def _desired_encoder_name() -> str:
     """Resolve the currently-selected encoder name from settings."""
     from app.services.settings_service import get_settings_service
-    return get_settings_service().get_string("voice.encoder", "ecapa") or "ecapa"
+    return get_settings_service().get_str("voice.encoder", "ecapa") or "ecapa"
 
 
 def _get_encoder() -> SpeakerEncoder:
