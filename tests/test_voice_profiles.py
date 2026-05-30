@@ -180,3 +180,100 @@ class TestListVoiceProfiles:
         assert response.status_code == 200
         profiles = response.json()["profiles"]
         assert len(profiles) == 2
+
+
+class TestListUserSamples:
+    def test_list_returns_enrolled_samples(self, client, temp_profile_dir):
+        for _ in range(3):
+            client.post(
+                "/voice-profiles/enroll",
+                params={"user_id": 42, "household_id": "h1"},
+                files={"file": ("voice.wav", _wav_bytes(), "audio/wav")},
+            )
+
+        response = client.get(
+            "/voice-profiles/42/samples",
+            params={"household_id": "h1"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["user_id"] == 42
+        indices = sorted(s["index"] for s in body["samples"])
+        assert indices == [0, 1, 2]
+        for s in body["samples"]:
+            assert s["filename"].startswith("sample_")
+            assert s["size_bytes"] > 0
+
+    def test_list_empty_for_unknown_user(self, client):
+        response = client.get(
+            "/voice-profiles/999/samples",
+            params={"household_id": "h1"},
+        )
+        assert response.status_code == 200
+        assert response.json()["samples"] == []
+
+
+class TestDeleteUserSample:
+    def test_delete_existing_sample(self, client, temp_profile_dir):
+        # Enroll two samples
+        for _ in range(2):
+            client.post(
+                "/voice-profiles/enroll",
+                params={"user_id": 42, "household_id": "h1"},
+                files={"file": ("voice.wav", _wav_bytes(), "audio/wav")},
+            )
+
+        response = client.delete(
+            "/voice-profiles/42/samples/0",
+            params={"household_id": "h1"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "deleted"
+        assert body["sample_index"] == 0
+        assert body["remaining_samples"] == 1
+
+        user_dir = temp_profile_dir / "h1" / hash_user_id(42)
+        assert not (user_dir / "sample_000.wav").exists()
+        assert (user_dir / "sample_001.wav").exists()
+
+    def test_delete_missing_sample_returns_404(self, client, temp_profile_dir):
+        client.post(
+            "/voice-profiles/enroll",
+            params={"user_id": 42, "household_id": "h1"},
+            files={"file": ("voice.wav", _wav_bytes(), "audio/wav")},
+        )
+        response = client.delete(
+            "/voice-profiles/42/samples/99",
+            params={"household_id": "h1"},
+        )
+        assert response.status_code == 404
+
+
+class TestCheckVoiceProfile:
+    def test_check_reports_existence_and_count(self, client, temp_profile_dir):
+        # Not enrolled yet
+        response = client.get(
+            "/voice-profiles/check",
+            params={"user_id": 42, "household_id": "h1"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["exists"] is False
+        assert body["sample_count"] == 0
+
+        # Enroll twice, then re-check
+        for _ in range(2):
+            client.post(
+                "/voice-profiles/enroll",
+                params={"user_id": 42, "household_id": "h1"},
+                files={"file": ("voice.wav", _wav_bytes(), "audio/wav")},
+            )
+
+        response = client.get(
+            "/voice-profiles/check",
+            params={"user_id": 42, "household_id": "h1"},
+        )
+        body = response.json()
+        assert body["exists"] is True
+        assert body["sample_count"] == 2

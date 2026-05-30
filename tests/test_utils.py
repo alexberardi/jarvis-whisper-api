@@ -431,3 +431,59 @@ class TestRecognizeSpeaker:
 
         assert result.user_id == 2
         assert result.confidence > 0.5
+
+
+class TestResolveVoiceDevice:
+    """Test _resolve_voice_device branches."""
+
+    def test_explicit_cpu_returns_cpu(self, monkeypatch):
+        from app.utils import _resolve_voice_device
+        monkeypatch.setenv("JARVIS_VOICE_DEVICE", "cpu")
+        assert _resolve_voice_device() == "cpu"
+
+    def test_auto_with_cuda_returns_cuda(self, monkeypatch):
+        from app import utils as utils_mod
+        monkeypatch.setenv("JARVIS_VOICE_DEVICE", "auto")
+        fake_torch = MagicMock()
+        fake_torch.cuda.is_available.return_value = True
+        monkeypatch.setitem(__import__("sys").modules, "torch", fake_torch)
+        assert utils_mod._resolve_voice_device() == "cuda"
+
+    def test_auto_without_cuda_returns_cpu(self, monkeypatch):
+        from app import utils as utils_mod
+        monkeypatch.setenv("JARVIS_VOICE_DEVICE", "auto")
+        fake_torch = MagicMock()
+        fake_torch.cuda.is_available.return_value = False
+        monkeypatch.setitem(__import__("sys").modules, "torch", fake_torch)
+        assert utils_mod._resolve_voice_device() == "cpu"
+
+    def test_cuda_requested_falls_back_to_cpu_when_unavailable(self, monkeypatch, caplog):
+        from app import utils as utils_mod
+        monkeypatch.setenv("JARVIS_VOICE_DEVICE", "cuda")
+        fake_torch = MagicMock()
+        fake_torch.cuda.is_available.return_value = False
+        monkeypatch.setitem(__import__("sys").modules, "torch", fake_torch)
+        assert utils_mod._resolve_voice_device() == "cpu"
+
+    def test_cuda_requested_and_available_returns_cuda(self, monkeypatch):
+        from app import utils as utils_mod
+        monkeypatch.setenv("JARVIS_VOICE_DEVICE", "cuda")
+        fake_torch = MagicMock()
+        fake_torch.cuda.is_available.return_value = True
+        monkeypatch.setitem(__import__("sys").modules, "torch", fake_torch)
+        assert utils_mod._resolve_voice_device() == "cuda"
+
+    def test_torch_import_failure_falls_back_to_cpu(self, monkeypatch):
+        from app import utils as utils_mod
+        monkeypatch.setenv("JARVIS_VOICE_DEVICE", "auto")
+        # Force `import torch` inside the function to raise
+        import builtins
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "torch":
+                raise ImportError("torch not installed")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        assert utils_mod._resolve_voice_device() == "cpu"
