@@ -9,7 +9,12 @@
 # Requires nvidia-container-toolkit on the host. For Apple Silicon (no
 # CUDA), keep using the default Dockerfile.
 
-FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS build
+# Pinned to the exact base digest v0.1.10-cuda was built against, because
+# NVIDIA pushes silent updates to the 12.4.1-devel-ubuntu22.04 tag and a
+# newer cuBLAS/cuDNN rev SIGILL'd whisper.cpp on prod during model load.
+# Bump deliberately, not via tag drift. To refresh:
+#   docker buildx imagetools inspect nvidia/cuda:12.4.1-devel-ubuntu22.04
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04@sha256:da6791294b0b04d7e65d87b7451d6f2390b4d36225ab0701ee7dfec5769829f5 AS build
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
