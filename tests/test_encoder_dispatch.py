@@ -110,7 +110,7 @@ class TestEncoderFallback:
 class TestDesiredEncoderName:
     def test_reads_voice_encoder_from_settings(self, monkeypatch):
         class _FakeSvc:
-            def get_string(self, key, default):
+            def get_str(self, key, default):
                 assert key == "voice.encoder"
                 return "resemblyzer"
 
@@ -122,7 +122,7 @@ class TestDesiredEncoderName:
 
     def test_falls_back_to_ecapa_when_setting_blank(self, monkeypatch):
         class _FakeSvc:
-            def get_string(self, key, default):
+            def get_str(self, key, default):
                 return ""
 
         monkeypatch.setattr(
@@ -130,6 +130,30 @@ class TestDesiredEncoderName:
             lambda: _FakeSvc(),
         )
         assert utils_mod._desired_encoder_name() == "ecapa"
+
+    def test_uses_real_settings_service_api(self):
+        """Smoke test against the real SettingsService to catch API drift.
+
+        Without this, mocked tests can hide a bad method name (e.g.
+        get_string vs get_str) that crashes prod at startup.
+        """
+        from jarvis_settings_client import SettingDefinition
+        from jarvis_settings_client.service import SettingsService
+
+        svc = SettingsService(
+            definitions=[
+                SettingDefinition(
+                    key="voice.encoder",
+                    category="voice",
+                    value_type="string",
+                    default="ecapa",
+                    description="test",
+                ),
+            ],
+            get_db_session=lambda: None,
+            setting_model=None,
+        )
+        assert svc.get_str("voice.encoder", "ecapa") == "ecapa"
 
 
 class TestLengthAdaptiveThreshold:
