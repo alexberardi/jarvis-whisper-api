@@ -109,31 +109,24 @@ class TestEncoderFallback:
 
 class TestLengthAdaptiveThreshold:
     def test_short_clip_uses_short_threshold(self, monkeypatch):
-        # Force the settings-service path to raise → env-var fallback
+        # Drive _pick_threshold through a fake settings service that returns
+        # the same values previous tests asserted against.
+        values = {
+            "voice.similarity_threshold": 0.5,
+            "voice.threshold_short": 0.65,
+            "voice.threshold_long": 0.4,
+            "voice.short_cutoff_seconds": 1.0,
+            "voice.long_cutoff_seconds": 3.0,
+        }
+
+        class _FakeSvc:
+            def get_float(self, key, default):
+                return values.get(key, default)
+
         monkeypatch.setattr(
-            utils_mod,
-            "_pick_threshold",
-            utils_mod._pick_threshold,
+            "app.services.settings_service.get_settings_service",
+            lambda: _FakeSvc(),
         )
-
-        # Stub out settings_service so we go through the env fallback branch
-        import sys
-        # Pre-warm an env that matches defaults
-        monkeypatch.setenv("VOICE_SIMILARITY_THRESHOLD", "0.5")
-        monkeypatch.setenv("VOICE_THRESHOLD_SHORT", "0.65")
-        monkeypatch.setenv("VOICE_THRESHOLD_LONG", "0.4")
-        monkeypatch.setenv("VOICE_SHORT_CUTOFF_SECONDS", "1.0")
-        monkeypatch.setenv("VOICE_LONG_CUTOFF_SECONDS", "3.0")
-
-        # Force the settings_service import to fail so env fallback kicks in
-        original_import = __builtins__["__import__"] if isinstance(__builtins__, dict) else __import__
-
-        def fake_import(name, *args, **kwargs):
-            if name == "app.services.settings_service":
-                raise ImportError("forced for test")
-            return original_import(name, *args, **kwargs)
-
-        monkeypatch.setattr("builtins.__import__", fake_import)
 
         assert utils_mod._pick_threshold(0.5) == 0.65   # short
         assert utils_mod._pick_threshold(2.0) == 0.5    # normal

@@ -153,13 +153,18 @@ class TestTranscribeEndpoint:
 
     @patch("app.main.recognize_speaker")
     @patch("app.main.run_whisper", return_value="Hello")
-    @patch.dict(os.environ, {"USE_VOICE_RECOGNITION": "true"})
+    @patch("app.main.get_settings_service")
     def test_transcribe_with_voice_recognition(
-        self, mock_whisper: MagicMock, mock_recognize: MagicMock, client: TestClient
+        self,
+        mock_settings: MagicMock,
+        mock_whisper: MagicMock,
+        mock_recognize: MagicMock,
+        client: TestClient,
     ) -> None:
         """POST /transcribe should include speaker info when recognition enabled."""
         from app.utils import SpeakerResult
 
+        mock_settings.return_value.get_bool.return_value = True
         mock_recognize.return_value = SpeakerResult(user_id=42, confidence=0.92)
         wav_data = io.BytesIO(b"RIFF" + b"\x00" * 100)
         response = client.post(

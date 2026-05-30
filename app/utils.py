@@ -227,11 +227,8 @@ def _load_ecapa_encoder(device: str) -> SpeakerEncoder:
 
 def _desired_encoder_name() -> str:
     """Resolve the currently-selected encoder name from settings."""
-    try:
-        from app.services.settings_service import get_settings_service
-        return get_settings_service().get_string("voice.encoder", "ecapa") or "ecapa"
-    except Exception:
-        return os.getenv("VOICE_ENCODER", "ecapa")
+    from app.services.settings_service import get_settings_service
+    return get_settings_service().get_string("voice.encoder", "ecapa") or "ecapa"
 
 
 def _get_encoder() -> SpeakerEncoder:
@@ -432,23 +429,15 @@ def _pick_threshold(duration_s: float) -> float:
 
     Reads settings: voice.threshold_short / voice.similarity_threshold /
     voice.threshold_long, gated by voice.short_cutoff_seconds and
-    voice.long_cutoff_seconds. Falls back to environment defaults if the
-    settings service is unavailable.
+    voice.long_cutoff_seconds.
     """
-    try:
-        from app.services.settings_service import get_settings_service
-        svc = get_settings_service()
-        normal = svc.get_float("voice.similarity_threshold", 0.5)
-        short = svc.get_float("voice.threshold_short", 0.65)
-        long_ = svc.get_float("voice.threshold_long", 0.4)
-        short_cut = svc.get_float("voice.short_cutoff_seconds", 1.0)
-        long_cut = svc.get_float("voice.long_cutoff_seconds", 3.0)
-    except Exception:
-        normal = float(os.getenv("VOICE_SIMILARITY_THRESHOLD", "0.5"))
-        short = float(os.getenv("VOICE_THRESHOLD_SHORT", "0.65"))
-        long_ = float(os.getenv("VOICE_THRESHOLD_LONG", "0.4"))
-        short_cut = float(os.getenv("VOICE_SHORT_CUTOFF_SECONDS", "1.0"))
-        long_cut = float(os.getenv("VOICE_LONG_CUTOFF_SECONDS", "3.0"))
+    from app.services.settings_service import get_settings_service
+    svc = get_settings_service()
+    normal = svc.get_float("voice.similarity_threshold", 0.5)
+    short = svc.get_float("voice.threshold_short", 0.65)
+    long_ = svc.get_float("voice.threshold_long", 0.4)
+    short_cut = svc.get_float("voice.short_cutoff_seconds", 1.0)
+    long_cut = svc.get_float("voice.long_cutoff_seconds", 3.0)
 
     if duration_s > 0 and duration_s < short_cut:
         return short
