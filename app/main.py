@@ -181,7 +181,7 @@ async def transcribe(
         # Use processed file if available, otherwise original
         whisper_input = processed_path if processed_path else tmp_path
 
-        text = run_whisper(
+        text, segments = run_whisper(
             whisper_input,
             prompt=prompt,
             temperature=temperature,
@@ -189,7 +189,7 @@ async def transcribe(
             beam_size=beam_size,
         )
         t_whisper = time.perf_counter()
-        logger.info(f"Transcribed {len(text)} chars for node {auth.context.node_id}")
+        logger.info(f"Transcribed {len(text)} chars, {len(segments)} segments for node {auth.context.node_id}")
 
         speaker_response: dict[str, int | float | None] = {"user_id": None, "confidence": 0.0}
         speaker_enabled = get_settings_service().get_bool("voice.recognition_enabled", False)
@@ -229,6 +229,7 @@ async def transcribe(
 
         return {
             "text": text,
+            "segments": segments,
             "speaker": speaker_response,
         }
 

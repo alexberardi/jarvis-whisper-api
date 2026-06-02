@@ -58,9 +58,15 @@ class TestHealthEndpoint:
 class TestTranscribeEndpoint:
     """Test POST /transcribe."""
 
-    @patch("app.main.run_whisper", return_value="Hello world")
+    @patch(
+        "app.main.run_whisper",
+        return_value=(
+            "Hello world",
+            [{"t0_ms": 0, "t1_ms": 1000, "text": "Hello world"}],
+        ),
+    )
     def test_transcribe_success(self, mock_whisper: MagicMock, client: TestClient) -> None:
-        """POST /transcribe should return transcribed text."""
+        """POST /transcribe should return transcribed text and segments."""
         wav_data = io.BytesIO(b"RIFF" + b"\x00" * 100)
         response = client.post(
             "/transcribe",
@@ -69,9 +75,10 @@ class TestTranscribeEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert data["text"] == "Hello world"
+        assert data["segments"] == [{"t0_ms": 0, "t1_ms": 1000, "text": "Hello world"}]
         assert data["speaker"]["user_id"] is None
 
-    @patch("app.main.run_whisper", return_value="Hello world")
+    @patch("app.main.run_whisper", return_value=("Hello world", []))
     def test_transcribe_with_prompt(self, mock_whisper: MagicMock, client: TestClient) -> None:
         """POST /transcribe should pass prompt to whisper."""
         wav_data = io.BytesIO(b"RIFF" + b"\x00" * 100)
@@ -85,7 +92,7 @@ class TestTranscribeEndpoint:
         assert call_kwargs.kwargs.get("prompt") == "Jarvis" or call_kwargs[1].get("prompt") == "Jarvis"
 
     @patch("app.main.preprocess_audio")
-    @patch("app.main.run_whisper", return_value="Preprocessed text")
+    @patch("app.main.run_whisper", return_value=("Preprocessed text", []))
     def test_transcribe_with_preprocessing(
         self, mock_whisper: MagicMock, mock_preprocess: MagicMock, client: TestClient
     ) -> None:
@@ -105,7 +112,7 @@ class TestTranscribeEndpoint:
             "normalization failed"
         ),
     )
-    @patch("app.main.run_whisper", return_value="Original text")
+    @patch("app.main.run_whisper", return_value=("Original text", []))
     def test_transcribe_preprocessing_failure_falls_back(
         self, mock_whisper: MagicMock, mock_preprocess: MagicMock, client: TestClient
     ) -> None:
@@ -152,7 +159,7 @@ class TestTranscribeEndpoint:
         assert "error" in response.json()
 
     @patch("app.main.recognize_speaker")
-    @patch("app.main.run_whisper", return_value="Hello")
+    @patch("app.main.run_whisper", return_value=("Hello", []))
     @patch("app.main.get_settings_service")
     def test_transcribe_with_voice_recognition(
         self,
@@ -176,7 +183,7 @@ class TestTranscribeEndpoint:
         assert data["speaker"]["user_id"] == 42
         assert data["speaker"]["confidence"] == 0.92
 
-    @patch("app.main.run_whisper", return_value="Hello")
+    @patch("app.main.run_whisper", return_value=("Hello", []))
     def test_transcribe_with_custom_params(
         self, mock_whisper: MagicMock, client: TestClient
     ) -> None:

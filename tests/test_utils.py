@@ -18,10 +18,15 @@ from app.utils import (
 )
 
 
-def _make_segment(text: str) -> MagicMock:
-    """Build a fake pywhispercpp Segment with a .text attribute."""
+def _make_segment(text: str, t0: int = 0, t1: int = 100) -> MagicMock:
+    """Build a fake pywhispercpp Segment with .text, .t0, .t1 attributes.
+
+    t0/t1 mimic whisper.cpp's centisecond units.
+    """
     seg = MagicMock()
     seg.text = text
+    seg.t0 = t0
+    seg.t1 = t1
     return seg
 
 
@@ -192,14 +197,21 @@ class TestRunWhisper:
     @patch("app.utils._load_for_whisper", return_value=np.zeros(16000, dtype=np.float32))
     @patch("app.utils.get_model")
     def test_run_whisper_success(self, mock_get_model: MagicMock, mock_load: MagicMock) -> None:
-        """run_whisper should join segment texts and return the trimmed result."""
+        """run_whisper should join segment texts and return text + segments."""
         model = MagicMock()
-        model.transcribe.return_value = [_make_segment("Hello "), _make_segment("world")]
+        model.transcribe.return_value = [
+            _make_segment("Hello ", t0=0, t1=50),
+            _make_segment("world", t0=80, t1=120),
+        ]
         mock_get_model.return_value = model
 
-        result = run_whisper("/tmp/test.wav")
+        text, segments = run_whisper("/tmp/test.wav")
 
-        assert result == "Hello  world"
+        assert text == "Hello  world"
+        assert segments == [
+            {"t0_ms": 0, "t1_ms": 500, "text": "Hello "},
+            {"t0_ms": 800, "t1_ms": 1200, "text": "world"},
+        ]
         model.transcribe.assert_called_once()
 
     @patch("app.utils._load_for_whisper", return_value=np.zeros(16000, dtype=np.float32))
@@ -226,9 +238,9 @@ class TestRunWhisper:
         model.transcribe.return_value = [_make_segment("Jarvis turn on lights")]
         mock_get_model.return_value = model
 
-        result = run_whisper("/tmp/test.wav", prompt="Jarvis commands")
+        text, _ = run_whisper("/tmp/test.wav", prompt="Jarvis commands")
 
-        assert result == "Jarvis turn on lights"
+        assert text == "Jarvis turn on lights"
         kwargs = model.transcribe.call_args.kwargs
         assert kwargs["initial_prompt"] == "Jarvis commands"
 
@@ -308,7 +320,7 @@ class TestRunWhisper:
         model.transcribe.return_value = [_make_segment("Hello world")]
         mock_get_model.return_value = model
 
-        result = run_whisper(
+        text, _ = run_whisper(
             "/tmp/test.wav",
             prompt="Test prompt",
             temperature=0.5,
@@ -316,7 +328,7 @@ class TestRunWhisper:
             beam_size=8,
         )
 
-        assert result == "Hello world"
+        assert text == "Hello world"
         kwargs = model.transcribe.call_args.kwargs
         assert kwargs["initial_prompt"] == "Test prompt"
         assert kwargs["temperature"] == 0.5
