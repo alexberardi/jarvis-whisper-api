@@ -79,7 +79,7 @@ def run_whisper(
     temperature: float = 0.0,
     temperature_inc: float = 0.2,
     beam_size: int = 5,
-) -> str:
+) -> tuple[str, list[dict]]:
     """Transcribe audio using the in-process whisper.cpp model.
 
     Args:
@@ -90,7 +90,13 @@ def run_whisper(
         beam_size: Beam size for beam search (default 5).
 
     Returns:
-        Transcribed text.
+        ``(text, segments)`` where ``text`` is the joined transcript and
+        ``segments`` is a list of ``{"t0_ms", "t1_ms", "text"}`` dicts.
+        whisper.cpp reports ``t0``/``t1`` in centiseconds (1/100 s); we
+        convert to milliseconds here so the API speaks one unit.
+        Callers use the gap between adjacent ``[t0, t1]`` ranges as a
+        narration-vs-command shape signal (no inter-segment pauses + lots
+        of words = ambient speech).
 
     Raises:
         WhisperTranscriptionError: If transcription fails.
@@ -112,7 +118,12 @@ def run_whisper(
             stderr=str(e),
         ) from e
 
-    return " ".join(seg.text for seg in segments).strip()
+    seg_dicts = [
+        {"t0_ms": int(seg.t0) * 10, "t1_ms": int(seg.t1) * 10, "text": seg.text}
+        for seg in segments
+    ]
+    text = " ".join(seg.text for seg in segments).strip()
+    return text, seg_dicts
 
 
 PROFILE_DIR = Path("voice_profiles")
