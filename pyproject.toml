@@ -9,7 +9,7 @@ description = "REST API wrapper for whisper.cpp with speaker recognition"
 requires-python = ">=3.11"
 dependencies = [
     "jarvis-config-client @ git+https://github.com/alexberardi/jarvis-config-client.git@c1c8903",
-    "jarvis-log-client @ git+https://github.com/alexberardi/jarvis-log-client.git@3c7da7e",
+    "jarvis-log-client @ git+https://github.com/alexberardi/jarvis-log-client.git@c2f8e82",
     "fastapi",
     "uvicorn",
     "python-multipart",
