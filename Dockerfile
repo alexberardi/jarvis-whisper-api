@@ -20,8 +20,12 @@ RUN apt-get update && apt-get install -y \
 
 # Build whisper.cpp
 ARG WHISPER_MODEL_NAME=base.en
+# Pin whisper.cpp to the last-green commit (see Dockerfile.rocm) so the build is
+# reproducible and immune to upstream main churn. Bump deliberately.
+ARG WHISPER_CPP_REF=84bd03a438454a82150853dce83818013c6609d2
 RUN git clone https://github.com/ggerganov/whisper.cpp.git /root/whisper.cpp && \
     cd /root/whisper.cpp && \
+    git checkout ${WHISPER_CPP_REF} && \
     bash ./models/download-ggml-model.sh ${WHISPER_MODEL_NAME} && \
     cmake -B build -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS && \
     cmake --build build --config Release -j$(nproc) && \

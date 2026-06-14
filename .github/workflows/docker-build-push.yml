@@ -29,14 +29,7 @@ jobs:
             suffix: "-rocm"
             platforms: linux/amd64
             cache_scope: rocm
-            # ROCm builds whisper.cpp from upstream main (unpinned, Dockerfile.rocm),
-            # whose HIP target breaks periodically with no change on our side. The
-            # CPU + CUDA images (the ones we actually deploy) must still gate the
-            # release, so the ROCm variant is non-blocking until whisper.cpp is
-            # pinned to a known-good commit.
-            experimental: true
     runs-on: ubuntu-latest
-    continue-on-error: ${{ matrix.experimental || false }}
     permissions:
       contents: read
       packages: write
