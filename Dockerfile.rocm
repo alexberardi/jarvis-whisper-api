@@ -61,8 +61,15 @@ WORKDIR /app
 # CUDA Dockerfile and to avoid pulling in optional examples.
 ARG WHISPER_MODEL_NAME=base.en
 ARG WHISPER_AMDGPU_TARGETS="gfx1030;gfx1100;gfx1101;gfx1102;gfx1200"
+# Pin whisper.cpp to the commit our last GREEN ROCm build (v0.1.16, 2026-06-09)
+# used. Upstream main's HIP target broke after this commit and reddened
+# v0.1.17/v0.1.18; HIP can't be validated in CI without AMD hardware, so we pin
+# for reproducible builds instead of tracking main. Bump this deliberately only
+# after confirming a newer commit builds the HIP target.
+ARG WHISPER_CPP_REF=84bd03a438454a82150853dce83818013c6609d2
 RUN git clone https://github.com/ggerganov/whisper.cpp.git /root/whisper.cpp \
     && cd /root/whisper.cpp \
+    && git checkout ${WHISPER_CPP_REF} \
     && bash ./models/download-ggml-model.sh ${WHISPER_MODEL_NAME} \
     && cmake -B build \
         -DGGML_HIP=ON \
