@@ -49,10 +49,14 @@ class TestHealthEndpoint:
     """Test GET /health."""
 
     def test_health_returns_healthy(self, client: TestClient) -> None:
-        """GET /health should return healthy status."""
+        """GET /health should return healthy status + speaker observability block."""
         response = client.get("/health")
         assert response.status_code == 200
-        assert response.json() == {"status": "healthy"}
+        body = response.json()
+        assert body["status"] == "healthy"
+        # /health now surfaces speaker-recognition state for observability
+        assert "speaker" in body
+        assert "recognition_enabled" in body["speaker"]
 
 
 class TestTranscribeEndpoint:
