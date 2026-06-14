@@ -112,6 +112,50 @@ SETTINGS_DEFINITIONS: list[SettingDefinition] = [
         default=1.0,
         description="Clips shorter than this use voice.threshold_short.",
     ),
+
+    # Embed-time audio preprocessing (applied symmetrically to enrollment
+    # AND recognition audio at the single ECAPA embed choke point).
+    SettingDefinition(
+        key="voice.embed_preprocess_enabled",
+        category="voice",
+        value_type="bool",
+        default=False,
+        description=(
+            "Apply symmetric preprocessing (DC removal + silence trim + RMS "
+            "normalization) to BOTH enrollment and recognition audio before "
+            "ECAPA embedding. Default OFF: an offline leave-one-out benchmark "
+            "on real profiles showed it is score-neutral (ECAPA already "
+            "mean-var-normalizes input), so it ships dormant pending "
+            "evaluation against per-trial telemetry rather than changing "
+            "production matching today. Flipping this re-embeds cached "
+            "profiles on the next request. ECAPA only — resemblyzer already "
+            "normalizes internally."
+        ),
+    ),
+    SettingDefinition(
+        key="voice.embed_target_rms_db",
+        category="voice",
+        value_type="float",
+        default=-23.0,
+        description=(
+            "Target RMS level (dBFS) that recognition + enrollment audio is "
+            "normalized to before ECAPA embedding when "
+            "voice.embed_preprocess_enabled is true. Affects scoring "
+            "consistency only, not the loudness of any audio output."
+        ),
+    ),
+    SettingDefinition(
+        key="voice.embed_trim_silence_db",
+        category="voice",
+        value_type="float",
+        default=-40.0,
+        description=(
+            "Silence threshold (dBFS) for trimming leading/trailing silence "
+            "before ECAPA embedding when voice.embed_preprocess_enabled is "
+            "true. Conservative by default so speech is never removed; an "
+            "all-silence clip falls back to the untrimmed signal."
+        ),
+    ),
     SettingDefinition(
         key="voice.long_cutoff_seconds",
         category="voice",

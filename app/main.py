@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from app.audio import preprocess_audio
 from app.deps import verify_app_auth
 from app.exceptions import AudioProcessingError, WhisperTranscriptionError
-from app.utils import recognize_speaker, run_whisper
+from app.utils import recognize_speaker, run_whisper, speaker_recognition_status
 from jarvis_auth_client.models import AppAuthResult
 
 load_dotenv()
@@ -26,6 +26,10 @@ logger = logging.getLogger("uvicorn")
 
 # Remote logging handler (initialized in startup event)
 _jarvis_handler = None
+
+# Throttle for the "speaker recognition disabled" warning so a busy node
+# doesn't spam the logs once per request when the flag is off.
+_throttle: dict[str, float] = {"disabled_log": 0.0}
 
 
 def _setup_remote_logging() -> None:
@@ -108,6 +112,11 @@ async def startup_event():
             )
         except (ImportError, RuntimeError, OSError) as e:
             logger.warning(f"VoiceEncoder pre-warm failed: {type(e).__name__}: {e}")
+    else:
+        logger.warning(
+            "SPEAKER RECOGNITION DISABLED (voice.recognition_enabled=false) — every "
+            "/transcribe returns speaker.user_id=None. Set it true to enable."
+        )
 
     logger.info("Jarvis Whisper API service started")
 
@@ -119,7 +128,12 @@ def pong():
 
 @app.get("/health")
 def health():
-    return {"status": "healthy"}
+    status: dict[str, object] = {"status": "healthy"}
+    try:
+        status["speaker"] = speaker_recognition_status()
+    except Exception as e:  # noqa: BLE001 — observability must never break liveness
+        logger.debug("speaker status unavailable for /health: %s", e)
+    return status
 
 
 @app.post("/transcribe")
@@ -216,6 +230,18 @@ async def transcribe(
                 auth.context.node_id,
                 auth.context.household_id,
             )
+        else:
+            # Recognition is off — make that visible (rate-limited) so a
+            # disabled flag isn't mistaken for a model that just never matches.
+            now = time.monotonic()
+            if now - _throttle["disabled_log"] > 60.0:
+                _throttle["disabled_log"] = now
+                logger.warning(
+                    "speaker_recognition_disabled node=%s household=%s "
+                    "(voice.recognition_enabled=false)",
+                    auth.context.node_id,
+                    auth.context.household_id,
+                )
         t_speaker = time.perf_counter()
 
         logger.info(
