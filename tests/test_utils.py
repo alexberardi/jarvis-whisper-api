@@ -113,6 +113,27 @@ class TestLoadHouseholdProfiles:
         result = load_household_profiles("empty-member-household", [])
         assert result == {}
 
+    def test_prep_fingerprint_change_invalidates_cache(self, monkeypatch) -> None:
+        """A change in embed-preprocess settings should drop cached centroids."""
+        from app import utils
+
+        utils.invalidate_household_cache()
+        utils._cache_prep_fingerprint = None
+        # Seed a fake cached centroid and pin its fingerprint to the current settings.
+        utils._household_profiles_cache["hh"] = {1: np.array([1.0])}
+        monkeypatch.setattr(utils, "_embed_prep_settings", lambda: (True, -23.0, -40.0))
+        utils._cache_prep_fingerprint = utils._embed_prep_fingerprint()
+
+        # Change the settings → new fingerprint → the cache must be invalidated
+        # so the stale centroid is re-embedded under the new regime.
+        monkeypatch.setattr(utils, "_embed_prep_settings", lambda: (True, -20.0, -40.0))
+        with patch.object(utils, "PROFILE_DIR", Path("/nonexistent")):
+            result = utils.load_household_profiles("hh", [1])
+
+        assert result == {}
+        assert utils._household_profiles_cache.get("hh") == {}
+        utils._cache_prep_fingerprint = None
+
 
 class TestInvalidateHouseholdCache:
     """Test invalidate_household_cache function."""
@@ -444,6 +465,30 @@ class TestRecognizeSpeaker:
         assert result.user_id == 2
         assert result.confidence > 0.5
 
+    @patch("app.utils.load_household_profiles")
+    @patch("app.utils._get_encoder")
+    def test_recognize_speaker_logs_per_member_telemetry(
+        self, mock_encoder: MagicMock, mock_load: MagicMock, caplog
+    ) -> None:
+        """recognize_speaker should log runner-up, margin, and per-member scores."""
+        import logging as _logging
+
+        mock_load.return_value = {
+            1: np.array([1.0, 0.0, 0.0]),
+            2: np.array([0.0, 1.0, 0.0]),
+        }
+        mock_encoder.return_value.embed.return_value = np.array([0.9, 0.1, 0.0])
+        mock_encoder.return_value.name = "ecapa"
+
+        with caplog.at_level(_logging.INFO, logger="app.utils"):
+            recognize_speaker("/tmp/x.wav", "hh", [1, 2], threshold=0.5)
+
+        text = caplog.text
+        assert "scores=[" in text
+        assert "second=" in text
+        assert "margin=" in text
+        assert "encoder=ecapa" in text
+
 
 class TestResolveVoiceDevice:
     """Test _resolve_voice_device branches."""
@@ -499,3 +544,89 @@ class TestResolveVoiceDevice:
 
         monkeypatch.setattr(builtins, "__import__", fake_import)
         assert utils_mod._resolve_voice_device() == "cpu"
+
+
+class TestPrepForEmbed:
+    """Test _prep_for_embed — the symmetric embed-preprocessing helper.
+
+    These cover the fix for the enroll↔runtime loudness asymmetry: enrollment
+    is captured raw/quiet while live commands are gain-normalized, so both must
+    be RMS-normalized + DC-removed + silence-trimmed before ECAPA sees them.
+    No torch/speechbrain needed — this is pure numpy/scipy.
+    """
+
+    @staticmethod
+    def _write_wav(path: Path, sr: int, audio: np.ndarray) -> None:
+        from scipy.io import wavfile
+        wavfile.write(str(path), sr, (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16))
+
+    def test_disabled_is_passthrough(self, tmp_path: Path, monkeypatch) -> None:
+        """With preprocessing disabled, output equals the raw 16k mono load."""
+        from app import utils
+        monkeypatch.setattr(utils, "_embed_prep_settings", lambda: (False, -23.0, -40.0))
+        sr = 16000
+        t = np.linspace(0.0, 1.0, sr, endpoint=False)
+        sig = (0.05 * np.sin(2 * np.pi * 220.0 * t)).astype(np.float32)
+        wav = tmp_path / "q.wav"
+        self._write_wav(wav, sr, sig)
+
+        out = utils._prep_for_embed(wav)
+
+        assert np.allclose(out, utils._load_wav_mono_16k(wav))
+
+    def test_normalizes_quiet_clip_up_to_target(self, tmp_path: Path, monkeypatch) -> None:
+        """A quiet clip is RMS-normalized up to the target level."""
+        from app import utils
+        monkeypatch.setattr(utils, "_embed_prep_settings", lambda: (True, -20.0, -60.0))
+        sr = 16000
+        t = np.linspace(0.0, 1.0, sr, endpoint=False)
+        sig = (0.02 * np.sin(2 * np.pi * 220.0 * t)).astype(np.float32)  # ~-34 dBFS
+        wav = tmp_path / "quiet.wav"
+        self._write_wav(wav, sr, sig)
+
+        out = utils._prep_for_embed(wav)
+
+        rms_db = 20.0 * np.log10(float(np.sqrt(np.mean(out**2))) + 1e-12)
+        assert abs(rms_db - (-20.0)) < 1.5
+
+    def test_removes_dc_offset(self, tmp_path: Path, monkeypatch) -> None:
+        """A DC offset is removed before embedding."""
+        from app import utils
+        monkeypatch.setattr(utils, "_embed_prep_settings", lambda: (True, -20.0, -60.0))
+        sr = 16000
+        t = np.linspace(0.0, 1.0, sr, endpoint=False)
+        sig = (0.1 * np.sin(2 * np.pi * 220.0 * t) + 0.2).astype(np.float32)
+        wav = tmp_path / "dc.wav"
+        self._write_wav(wav, sr, sig)
+
+        out = utils._prep_for_embed(wav)
+
+        assert abs(float(np.mean(out))) < 0.01
+
+    def test_trims_padding_silence(self, tmp_path: Path, monkeypatch) -> None:
+        """Leading/trailing silence is trimmed."""
+        from app import utils
+        monkeypatch.setattr(utils, "_embed_prep_settings", lambda: (True, -20.0, -40.0))
+        sr = 16000
+        silence = np.zeros(sr, dtype=np.float32)
+        t = np.linspace(0.0, 1.0, sr, endpoint=False)
+        tone = (0.3 * np.sin(2 * np.pi * 220.0 * t)).astype(np.float32)
+        sig = np.concatenate([silence, tone, silence])
+        wav = tmp_path / "pad.wav"
+        self._write_wav(wav, sr, sig)
+
+        out = utils._prep_for_embed(wav)
+
+        assert len(out) < len(sig)
+
+    def test_all_silence_does_not_crash(self, tmp_path: Path, monkeypatch) -> None:
+        """An all-silence clip falls back to the untrimmed signal, not a sliver."""
+        from app import utils
+        monkeypatch.setattr(utils, "_embed_prep_settings", lambda: (True, -20.0, -40.0))
+        sr = 16000
+        wav = tmp_path / "sil.wav"
+        self._write_wav(wav, sr, np.zeros(sr, dtype=np.float32))
+
+        out = utils._prep_for_embed(wav)
+
+        assert len(out) >= utils._MIN_PREP_SAMPLES

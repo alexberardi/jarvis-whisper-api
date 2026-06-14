@@ -12,7 +12,7 @@ from typing import Callable
 import numpy as np
 from scipy.signal import resample_poly
 
-from app.audio import load_audio
+from app.audio import load_audio, normalize_audio, trim_silence
 from app.exceptions import WhisperTranscriptionError
 from app.whisper_engine import get_model
 
@@ -133,6 +133,12 @@ _encoder_fingerprint: str | None = None
 # Cache loaded embeddings keyed by household_id, then user_id
 _household_profiles_cache: dict[str, dict[int, np.ndarray]] = {}
 
+# Fingerprint of the embed-preprocessing settings the cached centroids were
+# built with. When the settings change at runtime, the cached embeddings are
+# stale (they were pooled under the old loudness/trim regime) and must be
+# re-embedded — see load_household_profiles.
+_cache_prep_fingerprint: str | None = None
+
 
 def _resolve_voice_device() -> str:
     """Pick the torch device for the speaker-recognition encoder.
@@ -199,6 +205,69 @@ def _l2_normalize(v: np.ndarray) -> np.ndarray:
     return v / (norm + 1e-9)
 
 
+# 0.1s @ 16 kHz — never embed a sliver if silence-trim is over-aggressive.
+_MIN_PREP_SAMPLES = 1600
+
+
+def _embed_prep_settings() -> tuple[bool, float, float]:
+    """Read the symmetric embed-preprocessing settings.
+
+    Returns ``(enabled, target_rms_db, trim_silence_db)``. Defensive: any
+    failure reading settings (e.g. settings DB momentarily unavailable, or
+    no DB at all under unit tests) falls back to the documented defaults
+    rather than breaking the embedding path.
+    """
+    try:
+        from app.services.settings_service import get_settings_service
+        svc = get_settings_service()
+        return (
+            svc.get_bool("voice.embed_preprocess_enabled", False),
+            svc.get_float("voice.embed_target_rms_db", -23.0),
+            svc.get_float("voice.embed_trim_silence_db", -40.0),
+        )
+    except Exception:  # noqa: BLE001 — settings unavailability must not break embedding
+        return (False, -23.0, -40.0)
+
+
+def _embed_prep_fingerprint() -> str:
+    """Fingerprint of the prep settings, for profile-cache invalidation."""
+    enabled, target_rms_db, trim_db = _embed_prep_settings()
+    return f"{enabled}:{target_rms_db}:{trim_db}"
+
+
+def _prep_for_embed(path: Path) -> np.ndarray:
+    """Load + symmetrically normalize a clip for speaker embedding.
+
+    Loads the WAV as 16 kHz mono float32, then — when
+    ``voice.embed_preprocess_enabled`` — removes DC, trims leading/trailing
+    silence, and RMS-normalizes to a fixed target. Both the enrollment
+    samples (``load_household_profiles``) and the runtime query
+    (``recognize_speaker``) pass through here, so a centroid built from raw
+    far-field enrollment audio (~-27 dBFS in the field) and a live command
+    that the node gain-boosted toward ~-18 dBFS land in the SAME loudness
+    domain before ECAPA sees them. ECAPA cosine is sensitive to level and
+    spectral tilt, so removing that enroll↔runtime asymmetry is what lifts
+    the genuine-speaker score back above threshold.
+    """
+    audio = _load_wav_mono_16k(path)
+    enabled, target_rms_db, trim_db = _embed_prep_settings()
+    if not enabled:
+        return audio
+
+    # DC removal — a constant offset shifts the waveform and perturbs ECAPA.
+    audio = audio - float(np.mean(audio))
+
+    # Symmetric silence trim so enrollment (a long, pause-heavy read) and a
+    # short command pool over comparable speech fractions. Fall back to the
+    # untrimmed signal if the clip is (near) all-silence so we never embed a
+    # sliver.
+    trimmed = trim_silence(audio, 16000, threshold_db=trim_db)
+    if len(trimmed) >= _MIN_PREP_SAMPLES:
+        audio = trimmed
+
+    return normalize_audio(audio, target_db=target_rms_db)
+
+
 def _load_resemblyzer_encoder(device: str) -> SpeakerEncoder:
     if VoiceEncoder is None or preprocess_wav is None:
         raise ImportError("resemblyzer is not installed")
@@ -224,7 +293,7 @@ def _load_ecapa_encoder(device: str) -> SpeakerEncoder:
     )
 
     def embed(path: Path) -> np.ndarray:
-        signal = _load_wav_mono_16k(path)
+        signal = _prep_for_embed(path)
         with torch.no_grad():
             tensor = torch.from_numpy(signal).unsqueeze(0)
             if device == "cuda":
@@ -391,6 +460,15 @@ def load_household_profiles(
     Returns:
         Dictionary mapping user_id to L2-normalized voice embedding.
     """
+    # If the embed-preprocessing settings changed since the cache was built,
+    # the centroids were pooled under the old loudness/trim regime — drop the
+    # whole cache so every household re-embeds with the current settings.
+    global _cache_prep_fingerprint
+    fingerprint = _embed_prep_fingerprint()
+    if fingerprint != _cache_prep_fingerprint:
+        invalidate_household_cache()
+        _cache_prep_fingerprint = fingerprint
+
     # Check cache first
     if household_id in _household_profiles_cache:
         return _household_profiles_cache[household_id]
@@ -481,7 +559,15 @@ def recognize_speaker(
     profiles = load_household_profiles(household_id, member_ids)
 
     if not profiles:
-        logger.warning(f"No speaker profiles for household {household_id}")
+        # Distinguish an empty member scope (R6: CC sent no/empty member_ids,
+        # or no one is enrolled) from a genuine below-threshold no-match — they
+        # look identical downstream but have different fixes.
+        logger.warning(
+            "speaker_profiles_empty household=%s member_ids=%s — no profiles loaded "
+            "(check enrollment + household member scope)",
+            household_id,
+            member_ids,
+        )
         return SpeakerResult(user_id=None, confidence=0.0)
 
     audio_path_p = Path(audio_path)
@@ -490,7 +576,8 @@ def recognize_speaker(
         threshold = _pick_threshold(duration_s)
 
     try:
-        embed = _get_encoder().embed(audio_path_p)
+        encoder = _get_encoder()
+        embed = encoder.embed(audio_path_p)
     except (OSError, ValueError, RuntimeError, ImportError) as e:
         logger.error(f"Failed to process input audio: {type(e).__name__}: {e}")
         return SpeakerResult(user_id=None, confidence=0.0)
@@ -505,14 +592,33 @@ def recognize_speaker(
     best_user_id = max(scores, key=lambda k: scores[k])
     best_score = scores[best_user_id]
 
+    # Telemetry: the runner-up and the full per-member score vector let us
+    # measure genuine-vs-impostor separation and false-accept headroom on real
+    # traffic — today only the winner is logged, so thresholds can't be tuned
+    # from data. Within-household margin is the precision signal that gates any
+    # threshold-loosening change (a wrong match mis-scopes per-user secrets).
+    ranked = sorted(scores.values(), reverse=True)
+    second_best = ranked[1] if len(ranked) > 1 else 0.0
+    margin = best_score - second_best
+    scores_str = ",".join(
+        f"{uid}:{scores[uid]:.3f}"
+        for uid in sorted(scores, key=lambda k: scores[k], reverse=True)
+    )
+
     matched = best_score > threshold
     logger.info(
-        "Speaker match: household=%s best_user=%s score=%.3f threshold=%.2f duration=%.2fs → %s",
+        "Speaker match: household=%s best_user=%s score=%.3f second=%.3f margin=%.3f "
+        "threshold=%.2f duration=%.2fs encoder=%s members=%d scores=[%s] → %s",
         household_id,
         best_user_id,
         best_score,
+        second_best,
+        margin,
         threshold,
         duration_s,
+        encoder.name,
+        len(profiles),
+        scores_str,
         "MATCHED" if matched else "no match",
     )
 
@@ -520,3 +626,24 @@ def recognize_speaker(
         return SpeakerResult(user_id=best_user_id, confidence=best_score)
 
     return SpeakerResult(user_id=None, confidence=best_score)
+
+
+def speaker_recognition_status() -> dict[str, object]:
+    """Observable speaker-recognition state for ``/health``.
+
+    Surfaces whether recognition is enabled, the selected encoder, the
+    embed-preprocess flag, and the per-household profile counts currently
+    cached — so an operator (or jarvis-mcp ``debug_health``) can tell a
+    disabled flag or an empty member scope apart from a genuine no-match at a
+    glance, without grepping logs.
+    """
+    from app.services.settings_service import get_settings_service
+    svc = get_settings_service()
+    return {
+        "recognition_enabled": svc.get_bool("voice.recognition_enabled", False),
+        "encoder": _desired_encoder_name(),
+        "embed_preprocess_enabled": svc.get_bool("voice.embed_preprocess_enabled", False),
+        "cached_profile_counts": {
+            hh: len(p) for hh, p in _household_profiles_cache.items()
+        },
+    }
