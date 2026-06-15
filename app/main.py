@@ -145,6 +145,15 @@ async def transcribe(
     temperature: float = Query(default=0.0, ge=0.0, le=1.0, description="Initial temperature for sampling (0.0-1.0)"),
     temperature_inc: float = Query(default=0.2, ge=0.0, le=1.0, description="Temperature increment on decode failure (0.0-1.0)"),
     beam_size: int = Query(default=5, ge=1, le=16, description="Beam size for beam search (1-16)"),
+    speaker_recognition: bool = Query(
+        default=True,
+        description=(
+            "Run the voice speaker-recognition pass. Callers that already "
+            "know the speaker from authentication (e.g. mobile push-to-talk, "
+            "where identity comes from the JWT) should pass false to skip it — "
+            "voice matching is only meaningful on shared nodes."
+        ),
+    ),
     auth: AppAuthResult = Depends(verify_app_auth),
 ):
     """Transcribe audio + (optionally) identify the speaker.
@@ -207,8 +216,13 @@ async def transcribe(
 
         speaker_response: dict[str, int | float | None] = {"user_id": None, "confidence": 0.0}
         speaker_enabled = get_settings_service().get_bool("voice.recognition_enabled", False)
+        # The caller can opt out of the voice pass when it already knows who is
+        # speaking from authentication (mobile push-to-talk identifies the user
+        # by JWT, so voice matching is redundant — and a memberless request
+        # would needlessly exercise the speaker path).
+        run_speaker = speaker_enabled and speaker_recognition
 
-        if speaker_enabled:
+        if run_speaker:
             # Use the dedicated speaker-pass audio if the caller supplied one
             # (typically wake-word + command, for better short-clip recognition);
             # otherwise fall back to the transcription audio.
@@ -230,7 +244,7 @@ async def transcribe(
                 auth.context.node_id,
                 auth.context.household_id,
             )
-        else:
+        elif not speaker_enabled:
             # Recognition is off — make that visible (rate-limited) so a
             # disabled flag isn't mistaken for a model that just never matches.
             now = time.monotonic()
@@ -242,6 +256,9 @@ async def transcribe(
                     auth.context.node_id,
                     auth.context.household_id,
                 )
+        # else: recognition is enabled but the caller passed
+        # speaker_recognition=false (it identifies the speaker itself) — skip
+        # the pass silently; user_id stays None.
         t_speaker = time.perf_counter()
 
         logger.info(
@@ -249,7 +266,7 @@ async def transcribe(
             int((t_saved - t_start) * 1000),
             int((t_preproc - t_saved) * 1000),
             int((t_whisper - t_preproc) * 1000),
-            int((t_speaker - t_whisper) * 1000) if speaker_enabled else 0,
+            int((t_speaker - t_whisper) * 1000) if run_speaker else 0,
             int((t_speaker - t_start) * 1000),
         )
 

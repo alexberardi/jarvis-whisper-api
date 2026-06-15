@@ -20,7 +20,7 @@ def _reset_encoder_state(monkeypatch):
     """Wipe encoder singletons between tests."""
     monkeypatch.setattr(utils_mod, "_encoder", None)
     monkeypatch.setattr(utils_mod, "_encoder_fingerprint", None)
-    monkeypatch.setattr(utils_mod, "_household_profiles_cache", {})
+    monkeypatch.setattr(utils_mod, "_member_embedding_cache", {})
     yield
 
 
@@ -201,8 +201,8 @@ class TestCacheInvalidation:
         assert call_count["n"] == 1
 
     def test_switching_encoder_invalidates_profile_cache(self, monkeypatch):
-        # Seed the cache as if profiles were loaded
-        utils_mod._household_profiles_cache["h1"] = {42: np.zeros(32, dtype=np.float32)}
+        # Seed the cache as if a profile were loaded
+        utils_mod._member_embedding_cache[("h1", 42)] = np.zeros(32, dtype=np.float32)
 
         # First call: load ecapa
         monkeypatch.setattr(
@@ -218,9 +218,9 @@ class TestCacheInvalidation:
         monkeypatch.setattr(utils_mod, "_desired_encoder_name", lambda: "ecapa")
         _get_encoder()
         # Cache still has the seed (first-time load doesn't invalidate)
-        assert "h1" in utils_mod._household_profiles_cache
+        assert ("h1", 42) in utils_mod._member_embedding_cache
 
         # Switch encoder — should invalidate
         monkeypatch.setattr(utils_mod, "_desired_encoder_name", lambda: "resemblyzer")
         _get_encoder()
-        assert utils_mod._household_profiles_cache == {}
+        assert utils_mod._member_embedding_cache == {}

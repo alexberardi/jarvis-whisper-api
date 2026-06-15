@@ -130,8 +130,13 @@ PROFILE_DIR = Path("voice_profiles")
 _encoder: SpeakerEncoder | None = None
 _encoder_fingerprint: str | None = None
 
-# Cache loaded embeddings keyed by household_id, then user_id
-_household_profiles_cache: dict[str, dict[int, np.ndarray]] = {}
+# Cache speaker embeddings keyed on (household_id, user_id) — NOT a whole-
+# household result dict. Caching per member is what makes an empty or partial
+# member scope unable to poison a later, fuller scope: each member is resolved
+# independently and load_household_profiles assembles the result per request.
+# A value of None is a negative cache ("no profile on disk for this user"),
+# scoped to the exact user requested, so it can never block a different member.
+_member_embedding_cache: dict[tuple[str, int], np.ndarray | None] = {}
 
 # Fingerprint of the embed-preprocessing settings the cached centroids were
 # built with. When the settings change at runtime, the cached embeddings are
@@ -443,74 +448,92 @@ def user_profile_paths(household_id: str, user_id: int) -> list[Path]:
     return []
 
 
+def _load_member_embedding(household_id: str, user_id: int) -> np.ndarray | None:
+    """Load + average one member's enrolled samples into a single embedding.
+
+    Reads all of the user's WAV samples (see ``user_profile_paths`` for the
+    on-disk layout) and averages their embeddings into one L2-normalized
+    reference vector. Multi-sample enrollment reduces variance from any single
+    bad take. Returns None when the user has no profile on disk or embedding
+    fails — callers treat that as "not enrolled", never as an error.
+    """
+    paths = user_profile_paths(household_id, user_id)
+    if not paths:
+        return None
+    encoder = _get_encoder()
+    try:
+        embeddings = [encoder.embed(p) for p in paths]
+        avg = np.mean(np.stack(embeddings), axis=0)
+        logger.debug(
+            "Loaded voice profile for user %s (samples=%d)", user_id, len(paths)
+        )
+        return _l2_normalize(avg)
+    except (OSError, ValueError, RuntimeError) as e:
+        logger.error(
+            "Failed to load profile for user %s: %s: %s",
+            user_id,
+            type(e).__name__,
+            e,
+        )
+        return None
+
+
 def load_household_profiles(
     household_id: str, member_ids: list[int]
 ) -> dict[int, np.ndarray]:
-    """Load voice profiles for household members.
+    """Load voice profiles for the requested household members.
 
-    Reads one or more WAV samples per user (see ``user_profile_paths`` for
-    the on-disk layout) and averages their embeddings to produce a single
-    reference vector per user. Multi-sample enrollment reduces variance
-    from any single bad take.
+    Embeddings are cached per ``(household_id, user_id)`` and the returned dict
+    is assembled fresh on every call from exactly ``member_ids``. This is
+    deliberate and load-bearing: a request carrying an empty or partial member
+    scope (e.g. mobile push-to-talk, which knows the speaker from the JWT and
+    never resolves the household roster) can no longer poison a later, fuller
+    scope. The earlier design cached one dict per household keyed on
+    household_id alone, so the first empty-scope request after a restart cached
+    ``{}`` and every subsequent node command got that empty result back without
+    ever running recognition.
 
     Args:
         household_id: The household UUID.
-        member_ids: List of user IDs in the household.
+        member_ids: User IDs in the household to score against.
 
     Returns:
-        Dictionary mapping user_id to L2-normalized voice embedding.
+        Mapping of user_id to L2-normalized voice embedding, for the requested
+        members that have a profile on disk.
     """
     # If the embed-preprocessing settings changed since the cache was built,
     # the centroids were pooled under the old loudness/trim regime — drop the
-    # whole cache so every household re-embeds with the current settings.
+    # whole cache so every member re-embeds with the current settings.
     global _cache_prep_fingerprint
     fingerprint = _embed_prep_fingerprint()
     if fingerprint != _cache_prep_fingerprint:
         invalidate_household_cache()
         _cache_prep_fingerprint = fingerprint
 
-    # Check cache first
-    if household_id in _household_profiles_cache:
-        return _household_profiles_cache[household_id]
-
     profiles: dict[int, np.ndarray] = {}
-    household_dir = PROFILE_DIR / household_id
-
-    if not household_dir.exists():
-        logger.debug(f"Household directory not found: {household_dir}")
-        _household_profiles_cache[household_id] = profiles
-        return profiles
-
-    encoder = _get_encoder()
     for user_id in member_ids:
-        paths = user_profile_paths(household_id, user_id)
-        if not paths:
-            continue
-        try:
-            embeddings = [encoder.embed(p) for p in paths]
-            avg = np.mean(np.stack(embeddings), axis=0)
-            profiles[user_id] = _l2_normalize(avg)
-            logger.debug(
-                f"Loaded voice profile for user {user_id} (samples={len(paths)})"
-            )
-        except (OSError, ValueError, RuntimeError) as e:
-            logger.error(f"Failed to load profile for user {user_id}: {type(e).__name__}: {e}")
-
-    _household_profiles_cache[household_id] = profiles
+        key = (household_id, user_id)
+        if key not in _member_embedding_cache:
+            _member_embedding_cache[key] = _load_member_embedding(household_id, user_id)
+        embedding = _member_embedding_cache[key]
+        if embedding is not None:
+            profiles[user_id] = embedding
     return profiles
 
 
 def invalidate_household_cache(household_id: str | None = None) -> None:
-    """Invalidate cached household profiles.
+    """Invalidate cached member embeddings.
 
     Args:
-        household_id: Specific household to invalidate, or None to clear all.
+        household_id: Specific household to invalidate (drops every cached
+            member embedding under it), or None to clear the entire cache.
     """
-    global _household_profiles_cache
+    global _member_embedding_cache
     if household_id is None:
-        _household_profiles_cache = {}
-    elif household_id in _household_profiles_cache:
-        del _household_profiles_cache[household_id]
+        _member_embedding_cache = {}
+        return
+    for key in [k for k in _member_embedding_cache if k[0] == household_id]:
+        del _member_embedding_cache[key]
 
 
 def _pick_threshold(duration_s: float) -> float:
@@ -628,6 +651,21 @@ def recognize_speaker(
     return SpeakerResult(user_id=None, confidence=best_score)
 
 
+def _cached_profile_counts() -> dict[str, int]:
+    """Per-household count of members with a loaded (non-None) profile.
+
+    Preserves the historical ``{household_id: count}`` shape of /health now
+    that the cache is keyed on ``(household_id, user_id)``: a household whose
+    requested members are all negative-cached reports 0, same as before.
+    """
+    counts: dict[str, int] = {}
+    for (household_id, _user_id), embedding in _member_embedding_cache.items():
+        counts.setdefault(household_id, 0)
+        if embedding is not None:
+            counts[household_id] += 1
+    return counts
+
+
 def speaker_recognition_status() -> dict[str, object]:
     """Observable speaker-recognition state for ``/health``.
 
@@ -643,7 +681,5 @@ def speaker_recognition_status() -> dict[str, object]:
         "recognition_enabled": svc.get_bool("voice.recognition_enabled", False),
         "encoder": _desired_encoder_name(),
         "embed_preprocess_enabled": svc.get_bool("voice.embed_preprocess_enabled", False),
-        "cached_profile_counts": {
-            hh: len(p) for hh, p in _household_profiles_cache.items()
-        },
+        "cached_profile_counts": _cached_profile_counts(),
     }
