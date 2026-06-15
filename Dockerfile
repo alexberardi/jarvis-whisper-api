@@ -27,7 +27,7 @@ RUN git clone https://github.com/ggerganov/whisper.cpp.git /root/whisper.cpp && 
     cd /root/whisper.cpp && \
     git checkout ${WHISPER_CPP_REF} && \
     bash ./models/download-ggml-model.sh ${WHISPER_MODEL_NAME} && \
-    cmake -B build -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS && \
+    cmake -B build -DGGML_NATIVE=OFF -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS && \
     cmake --build build --config Release -j$(nproc) && \
     cp build/bin/whisper-cli /usr/local/bin/whisper-cli && \
     find build -name 'lib*.so*' -exec cp {} /usr/local/lib/ \; && \

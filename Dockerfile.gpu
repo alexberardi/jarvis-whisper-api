@@ -70,6 +70,7 @@ RUN git clone https://github.com/ggerganov/whisper.cpp.git /root/whisper.cpp \
     && bash ./models/download-ggml-model.sh ${WHISPER_MODEL_NAME} \
     && cmake -B build \
         -DGGML_CUDA=ON \
+        -DGGML_NATIVE=OFF \
         -DCMAKE_CUDA_ARCHITECTURES="${WHISPER_CUDA_ARCH}" \
         -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs -L/usr/local/cuda/lib64/stubs" \
         -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs -L/usr/local/cuda/lib64/stubs" \
@@ -100,11 +101,18 @@ COPY pyproject.toml .
 #
 # CMAKE_CUDA_ARCHITECTURES forces the compute capability instead of nvcc's
 # `-arch=native`, which fails inside a Docker build (no GPU visible).
+#
+# GGML_NATIVE=0 disables ggml's `-march=native`, which otherwise bakes the CI
+# build runner's CPU features into the binary. A runner with AVX-512 produced a
+# pywhispercpp that SIGILL'd at model load on the prod Ryzen 5950X (no AVX-512).
+# With native off, ggml targets a portable x86-64 baseline that runs on any host.
+# pywhispercpp's setup.py turns every env var into a -D<KEY>=<VALUE> cmake arg,
+# so bare GGML_NATIVE=0 becomes -DGGML_NATIVE=0 (same path as GGML_CUDA=1).
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu124 torch torchaudio \
     && LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH} \
        CMAKE_CUDA_ARCHITECTURES=${WHISPER_CUDA_ARCH} \
-       GGML_CUDA=1 pip install --no-cache-dir --no-binary pywhispercpp pywhispercpp==1.4.1 \
+       GGML_CUDA=1 GGML_NATIVE=0 pip install --no-cache-dir --no-binary pywhispercpp pywhispercpp==1.4.1 \
     && pip install --no-cache-dir .
 
 # pywhispercpp's wheel-repair step bundles a hash-renamed copy of the

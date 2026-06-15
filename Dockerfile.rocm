@@ -73,6 +73,7 @@ RUN git clone https://github.com/ggerganov/whisper.cpp.git /root/whisper.cpp \
     && bash ./models/download-ggml-model.sh ${WHISPER_MODEL_NAME} \
     && cmake -B build \
         -DGGML_HIP=ON \
+        -DGGML_NATIVE=OFF \
         -DAMDGPU_TARGETS="${WHISPER_AMDGPU_TARGETS}" \
         -DCMAKE_C_COMPILER=/opt/rocm/llvm/bin/clang \
         -DCMAKE_CXX_COMPILER=/opt/rocm/llvm/bin/clang++ \
@@ -99,7 +100,7 @@ COPY pyproject.toml .
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/rocm6.3 torch \
     && AMDGPU_TARGETS="${WHISPER_AMDGPU_TARGETS}" \
-       GGML_HIP=1 ROCM_PATH=/opt/rocm \
+       GGML_HIP=1 ROCM_PATH=/opt/rocm GGML_NATIVE=0 \
        pip install --no-cache-dir --no-binary pywhispercpp pywhispercpp==1.4.1 \
     && pip install --no-cache-dir .
 
