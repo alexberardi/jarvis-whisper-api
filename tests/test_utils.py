@@ -92,26 +92,36 @@ class TestLoadHouseholdProfiles:
         result = load_household_profiles("missing-household", [1, 2, 3])
         assert result == {}
 
-    def test_load_household_profiles_caches_results(self) -> None:
-        """load_household_profiles should cache results."""
-        # Use a nonexistent household directory
+    def test_load_household_profiles_caches_per_member(self) -> None:
+        """Embeddings cache per (household, user); a repeat call re-globs nothing."""
+        from app import utils
+
         household_id = "cache-test-household"
+        with patch.object(
+            utils, "user_profile_paths", return_value=[]
+        ) as mock_paths:
+            result1 = load_household_profiles(household_id, [1])
+            result2 = load_household_profiles(household_id, [1])
 
-        # First call - will check filesystem
-        result1 = load_household_profiles(household_id, [1])
-        # Second call - should use cache without filesystem access
-        result2 = load_household_profiles(household_id, [1])
-
-        # Both should return empty dict (no profiles exist)
+        # No profiles on disk → empty result both times.
         assert result1 == {}
         assert result2 == {}
-        # Verify it's the same cached object
-        assert result1 is result2
+        # The second call is served from the per-member (negative) cache, so the
+        # filesystem is consulted exactly once for user 1.
+        assert mock_paths.call_count == 1
+        assert utils._member_embedding_cache.get((household_id, 1)) is None
 
     def test_load_household_profiles_empty_member_list(self) -> None:
-        """load_household_profiles should handle empty member list."""
+        """An empty member list returns {} and caches nothing (no poison)."""
+        from app import utils
+
         result = load_household_profiles("empty-member-household", [])
         assert result == {}
+        # Critically, a memberless request must not write any cache entry for
+        # the household — otherwise it would poison a later, fuller scope.
+        assert not any(
+            k[0] == "empty-member-household" for k in utils._member_embedding_cache
+        )
 
     def test_prep_fingerprint_change_invalidates_cache(self, monkeypatch) -> None:
         """A change in embed-preprocess settings should drop cached centroids."""
@@ -119,8 +129,8 @@ class TestLoadHouseholdProfiles:
 
         utils.invalidate_household_cache()
         utils._cache_prep_fingerprint = None
-        # Seed a fake cached centroid and pin its fingerprint to the current settings.
-        utils._household_profiles_cache["hh"] = {1: np.array([1.0])}
+        # Seed a fake cached member embedding and pin its fingerprint.
+        utils._member_embedding_cache[("hh", 1)] = np.array([1.0])
         monkeypatch.setattr(utils, "_embed_prep_settings", lambda: (True, -23.0, -40.0))
         utils._cache_prep_fingerprint = utils._embed_prep_fingerprint()
 
@@ -131,7 +141,9 @@ class TestLoadHouseholdProfiles:
             result = utils.load_household_profiles("hh", [1])
 
         assert result == {}
-        assert utils._household_profiles_cache.get("hh") == {}
+        # The stale centroid was dropped; the re-load found nothing on disk and
+        # recorded a negative-cache entry instead.
+        assert utils._member_embedding_cache.get(("hh", 1)) is None
         utils._cache_prep_fingerprint = None
 
 
@@ -146,28 +158,135 @@ class TestInvalidateHouseholdCache:
         """invalidate_household_cache should clear specific household."""
         # Add to cache manually
         from app import utils
-        utils._household_profiles_cache["household-1"] = {1: np.array([1.0])}
-        utils._household_profiles_cache["household-2"] = {2: np.array([2.0])}
+        utils._member_embedding_cache[("household-1", 1)] = np.array([1.0])
+        utils._member_embedding_cache[("household-2", 2)] = np.array([2.0])
 
         invalidate_household_cache("household-1")
 
-        assert "household-1" not in utils._household_profiles_cache
-        assert "household-2" in utils._household_profiles_cache
+        assert ("household-1", 1) not in utils._member_embedding_cache
+        assert ("household-2", 2) in utils._member_embedding_cache
 
     def test_invalidate_household_cache_all(self) -> None:
         """invalidate_household_cache should clear all when no ID specified."""
         from app import utils
-        utils._household_profiles_cache["household-1"] = {1: np.array([1.0])}
-        utils._household_profiles_cache["household-2"] = {2: np.array([2.0])}
+        utils._member_embedding_cache[("household-1", 1)] = np.array([1.0])
+        utils._member_embedding_cache[("household-2", 2)] = np.array([2.0])
 
         invalidate_household_cache()
 
-        assert utils._household_profiles_cache == {}
+        assert utils._member_embedding_cache == {}
 
     def test_invalidate_household_cache_nonexistent(self) -> None:
         """invalidate_household_cache should not error for nonexistent household."""
         # Should not raise
         invalidate_household_cache("nonexistent-household")
+
+
+class TestMemberCacheIsolation:
+    """Regression tests for the (household, user) cache-poison fix.
+
+    The prod incident: a memberless mobile /stt request landed first after a
+    restart and, under the old household-keyed cache, poisoned the household
+    with ``{}`` so every later node command got no profiles back without ever
+    running recognition. The per-member cache must make that impossible.
+    """
+
+    def teardown_method(self) -> None:
+        invalidate_household_cache()
+
+    def test_memberless_request_does_not_poison_populated_scope(self) -> None:
+        """An empty-scope request must not block a later [1, 4] request."""
+        from app import utils
+
+        vec = np.array([1.0, 0.0], dtype=np.float32)
+        with patch.object(
+            utils,
+            "_load_member_embedding",
+            side_effect=lambda hh, uid: vec if uid in (1, 4) else None,
+        ):
+            # Memberless request first (the poison seed in prod).
+            assert load_household_profiles("hh", []) == {}
+            # The real node command must still resolve both members.
+            result = load_household_profiles("hh", [1, 4])
+
+        assert set(result) == {1, 4}
+
+    def test_partial_then_full_scope_loads_missing_member(self) -> None:
+        """A [1] request then [1, 4] must return both — not a cached partial."""
+        from app import utils
+
+        vec = np.array([1.0, 0.0], dtype=np.float32)
+        with patch.object(
+            utils,
+            "_load_member_embedding",
+            side_effect=lambda hh, uid: vec if uid in (1, 4) else None,
+        ):
+            load_household_profiles("hh", [1])
+            result = load_household_profiles("hh", [1, 4])
+
+        assert set(result) == {1, 4}
+
+    def test_per_user_embedding_loaded_once(self) -> None:
+        """Each member is embedded at most once per process across scopes."""
+        from app import utils
+
+        vec = np.array([1.0, 0.0], dtype=np.float32)
+        loader = MagicMock(side_effect=lambda hh, uid: vec)
+        with patch.object(utils, "_load_member_embedding", loader):
+            load_household_profiles("hh", [1])
+            load_household_profiles("hh", [1, 4])
+            load_household_profiles("hh", [1, 4])
+
+        # user 1 reused across all three calls, user 4 loaded once → 2 total.
+        loaded = sorted(call.args[1] for call in loader.call_args_list)
+        assert loaded == [1, 4]
+
+    def test_returned_dict_only_contains_requested_members(self) -> None:
+        """Member-scope isolation: never return a user outside member_ids."""
+        from app import utils
+
+        vec = np.array([1.0, 0.0], dtype=np.float32)
+        with patch.object(
+            utils,
+            "_load_member_embedding",
+            side_effect=lambda hh, uid: vec if uid in (1, 4, 7) else None,
+        ):
+            result = load_household_profiles("hh", [1, 4])
+
+        assert set(result) == {1, 4}  # user 7 enrolled but not requested
+
+    def test_negative_cache_does_not_block_other_member(self) -> None:
+        """A None-cached unenrolled user must not affect a different member."""
+        from app import utils
+
+        vec = np.array([1.0, 0.0], dtype=np.float32)
+        with patch.object(
+            utils,
+            "_load_member_embedding",
+            side_effect=lambda hh, uid: vec if uid == 1 else None,
+        ):
+            assert load_household_profiles("hh", [99]) == {}  # unenrolled → {}
+            result = load_household_profiles("hh", [1])
+
+        assert set(result) == {1}
+
+
+class TestCachedProfileCounts:
+    """speaker_recognition_status's cached_profile_counts shape preservation."""
+
+    def teardown_method(self) -> None:
+        invalidate_household_cache()
+
+    def test_counts_group_by_household_and_ignore_negative(self) -> None:
+        """{household_id: count of members with a non-None profile}."""
+        from app import utils
+
+        utils._member_embedding_cache[("hh1", 1)] = np.array([1.0])
+        utils._member_embedding_cache[("hh1", 2)] = np.array([2.0])
+        utils._member_embedding_cache[("hh2", 3)] = None  # negative-cached
+
+        counts = utils._cached_profile_counts()
+        assert counts == {"hh1": 2, "hh2": 0}
 
 
 class TestLoadForWhisper:

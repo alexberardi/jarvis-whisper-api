@@ -187,6 +187,30 @@ class TestTranscribeEndpoint:
         assert data["speaker"]["user_id"] == 42
         assert data["speaker"]["confidence"] == 0.92
 
+    @patch("app.main.recognize_speaker")
+    @patch("app.main.run_whisper", return_value=("Hello", []))
+    @patch("app.main.get_settings_service")
+    def test_transcribe_skips_speaker_when_caller_opts_out(
+        self,
+        mock_settings: MagicMock,
+        mock_whisper: MagicMock,
+        mock_recognize: MagicMock,
+        client: TestClient,
+    ) -> None:
+        """speaker_recognition=false must skip the voice pass even when enabled.
+
+        Mirrors mobile push-to-talk, which identifies the speaker by JWT.
+        """
+        mock_settings.return_value.get_bool.return_value = True
+        wav_data = io.BytesIO(b"RIFF" + b"\x00" * 100)
+        response = client.post(
+            "/transcribe?speaker_recognition=false",
+            files={"file": ("test.wav", wav_data, "audio/wav")},
+        )
+        assert response.status_code == 200
+        mock_recognize.assert_not_called()
+        assert response.json()["speaker"]["user_id"] is None
+
     @patch("app.main.run_whisper", return_value=("Hello", []))
     def test_transcribe_with_custom_params(
         self, mock_whisper: MagicMock, client: TestClient
