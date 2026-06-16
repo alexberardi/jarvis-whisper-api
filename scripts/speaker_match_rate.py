@@ -8,7 +8,7 @@ Usage:
     python scripts/speaker_match_rate.py                  # last 1h
     python scripts/speaker_match_rate.py --since 24h
     python scripts/speaker_match_rate.py --since 7d --node 51663b4f-...
-    python scripts/speaker_match_rate.py --logs-url http://10.0.0.103:7702
+    python scripts/speaker_match_rate.py --logs-url http://127.0.0.1:7702
 
 Requires env JARVIS_APP_ID and JARVIS_APP_KEY (defaults to jarvis-command-center
 app credentials when run from a host with those exported).
