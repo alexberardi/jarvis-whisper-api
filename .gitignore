@@ -36,6 +36,9 @@ audio/
 # Whisper model files (optional — include if you don’t want to track models)
 models/
 
+# Prebuilt whisper.cpp binaries (built from source via setup-whisper-cpp.sh / Dockerfiles)
+bin/
+
 # Build artifacts
 build/
 *.cmake

@@ -5,7 +5,7 @@ A Linux-friendly REST API wrapper for `whisper.cpp` with optional speaker recogn
 ```bash
 ./setup-python.sh
 ./setup-whisper-cpp.sh
-./run-dev.sh
+./run.sh
 ```
 
 ## Environment variables
@@ -18,7 +18,7 @@ Speaker recognition is toggled via the DB setting `voice.recognition_enabled` (a
 
 ## Production
 ```bash
-./full-setup-prod.sh
+./run-prod.sh
 ```
 
 ## Notes
