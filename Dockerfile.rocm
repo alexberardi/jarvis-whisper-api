@@ -98,7 +98,7 @@ COPY pyproject.toml .
 # links against ROCm libs and runs whisper.cpp inference on the GPU. Pinned
 # version matches pyproject.toml.
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/rocm6.3 torch \
+    && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/rocm6.3 torch torchaudio \
     && AMDGPU_TARGETS="${WHISPER_AMDGPU_TARGETS}" \
        GGML_HIP=1 ROCM_PATH=/opt/rocm GGML_NATIVE=0 \
        pip install --no-cache-dir --no-binary pywhispercpp pywhispercpp==1.4.1 \

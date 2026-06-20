@@ -16,15 +16,20 @@ from app.audio import load_audio, normalize_audio, trim_silence
 from app.exceptions import WhisperTranscriptionError
 from app.whisper_engine import get_model
 
+# These optional speaker-recognition deps pull torch/torchaudio. A broken native
+# build (e.g. a torchaudio wheel linked against CUDA on a ROCm/CPU host) raises
+# OSError from the dynamic loader, not ImportError — catch both so module import
+# never takes down STT. Speaker recognition degrades to disabled; transcription
+# still works.
 try:
     from resemblyzer import VoiceEncoder, preprocess_wav
-except ImportError:
+except (ImportError, OSError):
     VoiceEncoder = None  # type: ignore[assignment,misc]
     preprocess_wav = None  # type: ignore[assignment]
 
 try:
     from speechbrain.inference.speaker import EncoderClassifier as _SbEncoderClassifier
-except ImportError:
+except (ImportError, OSError):
     _SbEncoderClassifier = None  # type: ignore[assignment,misc]
 
 logger = logging.getLogger(__name__)
