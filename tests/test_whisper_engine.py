@@ -1,4 +1,5 @@
 """Tests for whisper_engine module (settings-driven Model with reload)."""
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -6,16 +7,25 @@ import pytest
 from app import whisper_engine
 from app.whisper_engine import (
     WhisperEngine,
+    _build_model,
     _read_fingerprint,
     get_model,
     reset_model_for_tests,
 )
 
 
-def _settings_returning(model_path: str) -> MagicMock:
-    """Build a mock SettingsService that returns the given model_path."""
+def _settings_returning(
+    model_path: str, allow_autodownload: bool = True
+) -> MagicMock:
+    """Build a mock SettingsService that returns the given model_path.
+
+    `allow_autodownload` defaults to True so the existing caching tests (which
+    use non-existent /tmp paths) still construct the Model regardless of disk
+    state. The egress-gate tests set it False explicitly.
+    """
     settings = MagicMock()
     settings.get_str.return_value = model_path
+    settings.get_bool.return_value = allow_autodownload
     return settings
 
 
@@ -63,10 +73,10 @@ class TestEngineCaching:
     def teardown_method(self) -> None:
         reset_model_for_tests()
 
-    def _patch_settings(self, model_path: str):
+    def _patch_settings(self, model_path: str, allow_autodownload: bool = True):
         return patch(
             "app.services.settings_service.get_settings_service",
-            return_value=_settings_returning(model_path),
+            return_value=_settings_returning(model_path, allow_autodownload),
         )
 
     def _patch_module(self, *models: MagicMock):
@@ -145,3 +155,90 @@ class TestEngineCaching:
         assert mod.Model.call_count == 1
         # Singleton is alive after first construction
         assert whisper_engine._engine is not None
+
+
+class TestAutodownloadGate:
+    """Tests for the model auto-download egress gate (fail closed by default).
+
+    The gate must NEVER let pywhispercpp egress to huggingface.co when
+    auto-download is disabled and no local model exists. We prove no egress by
+    asserting the fake Model is never constructed.
+    """
+
+    def teardown_method(self) -> None:
+        reset_model_for_tests()
+
+    def _patch_settings(self, model_path: str, allow_autodownload: bool):
+        return patch(
+            "app.services.settings_service.get_settings_service",
+            return_value=_settings_returning(model_path, allow_autodownload),
+        )
+
+    def _patch_module(self):
+        fake_module = MagicMock()
+        fake_module.Model.return_value = MagicMock()
+        return patch.dict("sys.modules", {"pywhispercpp.model": fake_module}), fake_module
+
+    def test_disabled_and_no_local_file_raises_and_never_constructs_model(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Gate off + missing file → guidance RuntimeError, Model NEVER built."""
+        monkeypatch.delenv("WHISPER_N_THREADS", raising=False)
+        mod_patch, mod = self._patch_module()
+        missing = "/tmp/definitely-not-a-real-whisper-model-xyz.bin"
+        assert not os.path.exists(missing)
+        with self._patch_settings(missing, allow_autodownload=False), mod_patch:
+            engine = WhisperEngine()
+            with pytest.raises(RuntimeError, match="auto-download is disabled"):
+                engine.get()
+        # No egress: pywhispercpp Model was never constructed.
+        assert mod.Model.call_count == 0
+
+    def test_disabled_with_existing_file_constructs_with_resolved_path(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        """Gate off + file exists → Model built with the expanduser'd path."""
+        monkeypatch.delenv("WHISPER_N_THREADS", raising=False)
+        model_file = tmp_path / "ggml-base.en.bin"
+        model_file.write_bytes(b"fake-ggml")
+        mod_patch, mod = self._patch_module()
+        with self._patch_settings(str(model_file), allow_autodownload=False), mod_patch:
+            engine = WhisperEngine()
+            engine.get()
+        assert mod.Model.call_count == 1
+        _, kwargs = mod.Model.call_args
+        assert kwargs["model"] == str(model_file)
+
+    def test_enabled_and_no_local_file_constructs_model(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Gate ON + missing file → download path permitted, Model IS built."""
+        monkeypatch.delenv("WHISPER_N_THREADS", raising=False)
+        mod_patch, mod = self._patch_module()
+        missing = "/tmp/definitely-not-a-real-whisper-model-abc.bin"
+        assert not os.path.exists(missing)
+        with self._patch_settings(missing, allow_autodownload=True), mod_patch:
+            engine = WhisperEngine()
+            engine.get()
+        # Download permitted: Model constructed (mock — no real network).
+        assert mod.Model.call_count == 1
+        _, kwargs = mod.Model.call_args
+        assert kwargs["model"] == missing
+
+    def test_tilde_path_is_expanded_before_model_load(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        """A '~'-prefixed model_path must be expanded to an absolute path."""
+        monkeypatch.delenv("WHISPER_N_THREADS", raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        # Touch the file at the expanded location so the gate passes too.
+        model_file = tmp_path / "x.bin"
+        model_file.write_bytes(b"fake-ggml")
+        mod_patch, mod = self._patch_module()
+        with self._patch_settings("~/x.bin", allow_autodownload=False), mod_patch:
+            engine = WhisperEngine()
+            engine.get()
+        assert mod.Model.call_count == 1
+        _, kwargs = mod.Model.call_args
+        assert kwargs["model"] == str(model_file)
+        assert "~" not in kwargs["model"]

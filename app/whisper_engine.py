@@ -29,6 +29,7 @@ class _EngineFingerprint:
     """Settings state that should trigger a model reload when changed."""
     model_path: str
     n_threads: int
+    allow_autodownload: bool
 
 
 def _read_fingerprint() -> _EngineFingerprint:
@@ -49,19 +50,48 @@ def _read_fingerprint() -> _EngineFingerprint:
             "whisper.model_path is not set and WHISPER_MODEL env var is empty"
         )
     n_threads = int(os.getenv("WHISPER_N_THREADS", "4"))
-    return _EngineFingerprint(model_path=model_path, n_threads=n_threads)
+    allow_autodownload = settings.get_bool("whisper.allow_model_autodownload", False)
+    return _EngineFingerprint(
+        model_path=model_path,
+        n_threads=n_threads,
+        allow_autodownload=allow_autodownload,
+    )
 
 
 def _build_model(fp: _EngineFingerprint) -> "Model":
-    """Construct a pywhispercpp Model from the given fingerprint."""
+    """Construct a pywhispercpp Model from the given fingerprint.
+
+    Fails closed when model auto-download is disabled (the default): if no
+    local model file exists at the resolved path, raise rather than let
+    pywhispercpp egress to huggingface.co to fetch one. Outbound internet is
+    opt-in only (whisper.allow_model_autodownload).
+    """
+    from pathlib import Path
+
     from pywhispercpp.model import Model
+
+    # Expand '~' so the gate check and Model load both see the real path
+    # (this also fixes pywhispercpp not expanding '~' itself).
+    resolved = os.path.expanduser(fp.model_path)
+
+    if not fp.allow_autodownload and not Path(resolved).is_file():
+        raise RuntimeError(
+            f"Whisper model file not found at '{resolved}' and model "
+            "auto-download is disabled (whisper.allow_model_autodownload is "
+            "false). Outbound internet is opt-in only, so the model will NOT "
+            "be fetched from huggingface.co. To fix: point whisper.model_path "
+            "(or WHISPER_MODEL) at a local GGML model file, OR set "
+            "whisper.allow_model_autodownload=true "
+            "(WHISPER_ALLOW_MODEL_AUTODOWNLOAD=true) to permit the download."
+        )
+
     logger.info(
         "Loading whisper model from %s (n_threads=%d)",
-        fp.model_path,
+        resolved,
         fp.n_threads,
     )
     return Model(
-        model=fp.model_path,
+        model=resolved,
         n_threads=fp.n_threads,
         print_progress=False,
         print_realtime=False,

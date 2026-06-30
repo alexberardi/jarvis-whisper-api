@@ -17,6 +17,23 @@ SETTINGS_DEFINITIONS: list[SettingDefinition] = [
         env_fallback="WHISPER_MODEL",
         requires_reload=True,
     ),
+    SettingDefinition(
+        key="whisper.allow_model_autodownload",
+        category="whisper.model",
+        value_type="bool",
+        default=False,
+        description=(
+            "Allow whisper.cpp / pywhispercpp to auto-download a model from "
+            "huggingface.co when no local file exists at whisper.model_path. "
+            "Default false keeps the service fully offline: outbound internet "
+            "is opt-in only. When false and no local model is present, the "
+            "engine fails closed with an actionable error instead of egressing. "
+            "Supply your own model via whisper.model_path / WHISPER_MODEL and "
+            "leave this off, or set it true to permit the download."
+        ),
+        env_fallback="WHISPER_ALLOW_MODEL_AUTODOWNLOAD",
+        requires_reload=True,
+    ),
     # Transcription parameters
     SettingDefinition(
         key="whisper.default_temperature",
