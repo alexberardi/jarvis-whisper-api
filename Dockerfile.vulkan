@@ -33,7 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake git wget pkg-config curl \
         python3.11 python3.11-venv python3.11-dev \
         libopenblas-dev libsndfile1 ffmpeg \
-        libvulkan-dev vulkan-headers glslang-tools spirv-headers shaderc \
+        libvulkan-dev glslang-tools spirv-headers glslc \
         mesa-vulkan-drivers libvulkan1 libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
