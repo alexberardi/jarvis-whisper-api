@@ -1,0 +1,88 @@
+# AMD Vulkan variant: whisper.cpp built with the Vulkan backend for GPU-accelerated
+# transcription on AMD GPUs (RDNA2 through RDNA4) via Mesa RADV.
+#
+# Why Vulkan over ROCm here: the STT hot path is 100% whisper.cpp (pywhispercpp),
+# which supports Vulkan. Vulkan compiles vendor-neutral SPIR-V shaders, so there is
+# NO per-arch gfx target list to maintain and it works on RDNA4/gfx1201 (RX 9070/XT)
+# that the ROCm 6.3 base can't. Speaker recognition (resemblyzer/torch) is optional
+# and OFF by default; Vulkan can't back torch, so it runs on CPU (JARVIS_VOICE_DEVICE=cpu).
+#
+# Build:  docker build -f Dockerfile.vulkan -t jarvis-whisper-api:vulkan .
+# Run:    docker run --device=/dev/dri --group-add video --group-add render \
+#                    -p 7706:7706 jarvis-whisper-api:vulkan
+#
+# Requires an AMD GPU + amdgpu kernel driver on the host and --device /dev/dri
+# passthrough (NO /dev/kfd — that's ROCm-only). Runtime ships Mesa 25.x via the
+# kisak PPA so RADV supports RDNA4/gfx1201; stock Ubuntu Mesa predates RDNA4.
+
+# Pinned by digest to prevent silent upstream drift. To refresh deliberately:
+#   docker buildx imagetools inspect ubuntu:24.04
+FROM ubuntu:24.04@sha256:786a8b558f7be160c6c8c4a54f9a57274f3b4fb1491cf65146521ae77ff1dc54
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# python3.11 via deadsnakes (noble ships 3.12) + Mesa 25.x via kisak-mesa (RADV
+# RDNA4) + Vulkan SDK build deps + whisper audio runtime deps (ffmpeg/libsndfile).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates gnupg software-properties-common \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && add-apt-repository -y ppa:kisak/kisak-mesa \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        build-essential cmake git wget pkg-config curl \
+        python3.11 python3.11-venv python3.11-dev \
+        libopenblas-dev libsndfile1 ffmpeg \
+        libvulkan-dev vulkan-headers glslang-tools spirv-headers shaderc \
+        mesa-vulkan-drivers libvulkan1 libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Use an isolated venv (noble's system python is PEP-668 managed) so pip installs
+# cleanly; uvicorn + the app run from it via PATH.
+RUN python3.11 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+RUN pip install --no-cache-dir --upgrade pip
+
+WORKDIR /app
+
+# Build whisper.cpp with the Vulkan backend. SPIR-V shaders are vendor-neutral —
+# no AMDGPU target list, works on any RADV-supported GPU including RDNA4/gfx1201.
+ARG WHISPER_MODEL_NAME=base.en
+# Pin a current whisper.cpp release with a mature Vulkan backend. The HIP build
+# pins an older commit (84bd03a) because upstream's HIP target is fragile; that
+# concern is HIP-specific and irrelevant to Vulkan. Bump deliberately.
+ARG WHISPER_CPP_REF=v1.9.1
+RUN git clone https://github.com/ggerganov/whisper.cpp.git /root/whisper.cpp \
+    && cd /root/whisper.cpp \
+    && git checkout ${WHISPER_CPP_REF} \
+    && bash ./models/download-ggml-model.sh ${WHISPER_MODEL_NAME} \
+    && cmake -B build \
+        -DGGML_VULKAN=ON \
+        -DGGML_NATIVE=OFF \
+    && cmake --build build --config Release --target whisper-cli -j$(nproc) \
+    && cp build/bin/whisper-cli /usr/local/bin/whisper-cli \
+    && find build -name 'lib*.so*' -exec cp {} /usr/local/lib/ \; \
+    && ldconfig
+
+COPY app /app/app
+COPY alembic /app/alembic
+COPY alembic.ini /app/alembic.ini
+COPY pyproject.toml .
+
+# CPU torch (resemblyzer's dep) — Vulkan can't back torch and speaker recognition
+# is off by default (falls back to CPU). Build pywhispercpp from source with Vulkan
+# so the in-process STT engine runs on the GPU (GGML_VULKAN=1 is forwarded to its
+# vendored whisper.cpp cmake, same mechanism the HIP build uses with GGML_HIP=1).
+RUN pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cpu \
+    && GGML_VULKAN=1 GGML_NATIVE=0 \
+       pip install --no-cache-dir --no-binary pywhispercpp pywhispercpp==1.4.1 \
+    && pip install --no-cache-dir .
+
+ENV PORT=7706 \
+    WHISPER_MODEL=/root/whisper.cpp/models/ggml-base.en.bin \
+    WHISPER_CLI=/usr/local/bin/whisper-cli \
+    JARVIS_VOICE_DEVICE=cpu
+
+EXPOSE 7706
+
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT}

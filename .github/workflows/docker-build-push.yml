@@ -29,6 +29,10 @@ jobs:
             suffix: "-rocm"
             platforms: linux/amd64
             cache_scope: rocm
+          - dockerfile: Dockerfile.vulkan
+            suffix: "-vulkan"
+            platforms: linux/amd64
+            cache_scope: vulkan
     runs-on: ubuntu-latest
     permissions:
       contents: read
