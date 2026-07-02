@@ -9,13 +9,14 @@
 #                    -p 7706:7706 jarvis-whisper-api:rocm
 #
 # Requires an AMD GPU with a ROCm-supported architecture and the AMDGPU kernel
-# driver on the host. ROCm 6.3+ is required because current whisper.cpp HIP
-# bindings reference __hip_fp8_e4m3, which only exists in ROCm 6.3+.
+# driver on the host. ROCm 7.2 base — required for RDNA4 / gfx1201 (RX 9070 /
+# 9070 XT); 6.3 predates that arch. 7.2 also satisfies whisper.cpp's HIP floor
+# (>= 6.3, where the __hip_fp8_e4m3 type its bindings reference first appeared).
 
 # Pinned by digest to prevent silent upstream drift (see Dockerfile.gpu
 # for the incident that motivated this). To refresh deliberately:
-#   docker buildx imagetools inspect rocm/dev-ubuntu-22.04:6.3-complete
-FROM rocm/dev-ubuntu-22.04:6.3-complete@sha256:e9e947a794e355bc41c22021387f303f406f77e3676e2fb4ea6b9c9a494dcf0a AS build
+#   docker buildx imagetools inspect rocm/dev-ubuntu-22.04:7.2.4-complete
+FROM rocm/dev-ubuntu-22.04:7.2.4-complete@sha256:e3909c89d9434e2816568f727e89bf6a00d6d9d746defc6b9957dbeb16d1ac31 AS build
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -54,13 +55,16 @@ WORKDIR /app
 #     gfx1100  RX 7900 (RDNA3 N31)
 #     gfx1101  RX 7800 (RDNA3 N32)
 #     gfx1102  RX 7700 / 7600 (RDNA3 N33)
-#     gfx1200  RX 9070 (RDNA4) — needs ROCm 6.2+
+#     gfx1200  RX 9060 (RDNA4)
+#     gfx1201  RX 9070 / 9070 XT (RDNA4)
+#   RDNA4 needs the ROCm 7.x base and its ISA must be compiled natively —
+#   HSA_OVERRIDE_GFX_VERSION masquerading does not work for gfx120x.
 #   Override at build time:  --build-arg WHISPER_AMDGPU_TARGETS=gfx1100
 #
 # We build only the whisper-cli target (skip whisper-bench) for parity with the
 # CUDA Dockerfile and to avoid pulling in optional examples.
 ARG WHISPER_MODEL_NAME=base.en
-ARG WHISPER_AMDGPU_TARGETS="gfx1030;gfx1100;gfx1101;gfx1102;gfx1200"
+ARG WHISPER_AMDGPU_TARGETS="gfx1030;gfx1100;gfx1101;gfx1102;gfx1200;gfx1201"
 # Pin whisper.cpp to the commit our last GREEN ROCm build (v0.1.16, 2026-06-09)
 # used. Upstream main's HIP target broke after this commit and reddened
 # v0.1.17/v0.1.18; HIP can't be validated in CI without AMD hardware, so we pin
@@ -92,13 +96,16 @@ COPY pyproject.toml .
 # Install ROCm-enabled torch wheel BEFORE installing the project, so resemblyzer's
 # torch dep doesn't pull the CPU wheel. torch+ROCm exposes the HIP backend through
 # the torch.cuda API (CUDA-compatible), so JARVIS_VOICE_DEVICE=cuda still selects
-# the GPU at runtime.
+# the GPU at runtime. The rocm7.2 wheel index matches the base image's ROCm
+# major and is needed for RDNA4: rocm6.3 wheels carry no gfx1201 code objects,
+# and their bundled ROCm 6 runtime would race the 7.2 /opt/rocm libs on
+# LD_LIBRARY_PATH for any soname the two lines share.
 #
 # pywhispercpp ships CPU-only wheels on PyPI. Force a source build with HIP so it
 # links against ROCm libs and runs whisper.cpp inference on the GPU. Pinned
 # version matches pyproject.toml.
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/rocm6.3 torch torchaudio \
+    && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/rocm7.2 torch torchaudio \
     && AMDGPU_TARGETS="${WHISPER_AMDGPU_TARGETS}" \
        GGML_HIP=1 ROCM_PATH=/opt/rocm GGML_NATIVE=0 \
        pip install --no-cache-dir --no-binary pywhispercpp pywhispercpp==1.4.1 \
