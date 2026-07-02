@@ -37,6 +37,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         mesa-vulkan-drivers libvulkan1 libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
+# The compose passes group_add: [video, render] for GPU /dev/dri access; Ubuntu's
+# minimal base has `video` but NOT `render`, so create it — otherwise the container
+# fails to start with "unable to find group render".
+RUN groupadd -f render && groupadd -f video
+
 # Use an isolated venv (noble's system python is PEP-668 managed) so pip installs
 # cleanly; uvicorn + the app run from it via PATH.
 RUN python3.11 -m venv /opt/venv
