@@ -34,7 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3.11 python3.11-venv python3.11-dev \
         libopenblas-dev libsndfile1 ffmpeg \
         libvulkan-dev glslang-tools spirv-headers glslc \
-        mesa-vulkan-drivers libvulkan1 libgomp1 \
+        mesa-vulkan-drivers libvulkan1 libgomp1 vulkan-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # The compose passes group_add: [video, render] for GPU /dev/dri access; Ubuntu's

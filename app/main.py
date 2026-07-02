@@ -16,6 +16,17 @@ from jarvis_auth_client.models import AppAuthResult
 
 load_dotenv()
 
+# Pin the GPU backend to the DISCRETE GPU before pywhispercpp triggers whisper.cpp's
+# Vulkan/HIP init (lazy import in app.whisper_engine). On dGPU+iGPU boxes this avoids
+# binding the integrated GPU. Best-effort and guarded; never blocks startup. Respects
+# an operator-set *_VISIBLE_DEVICES.
+try:
+    from app.gpu_select import select_discrete_gpu
+
+    select_discrete_gpu()
+except Exception:  # noqa: BLE001 - startup must not depend on GPU auto-select
+    pass
+
 # Set up logging
 console_level = os.getenv("JARVIS_LOG_CONSOLE_LEVEL", "INFO")
 logging.basicConfig(
