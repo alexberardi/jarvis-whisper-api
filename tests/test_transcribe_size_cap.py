@@ -5,6 +5,10 @@ The size guard runs before any whisper work, so these tests need no model.
 import io
 import os
 
+# Importing app.main resolves the auth URL at module load; give the discovery
+# fallback a value so the import doesn't require a live config-service in CI.
+os.environ.setdefault("JARVIS_AUTH_BASE_URL", "http://localhost:7701")
+
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
