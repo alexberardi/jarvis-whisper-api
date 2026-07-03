@@ -277,3 +277,47 @@ class TestCheckVoiceProfile:
         body = response.json()
         assert body["exists"] is True
         assert body["sample_count"] == 2
+
+
+class TestDeleteAllUserProfiles:
+    """DELETE /voice-profiles/user/{user_id} — account-deletion biometric purge."""
+
+    def _enroll(self, client, user_id, household_id):
+        r = client.post(
+            "/voice-profiles/enroll",
+            params={"user_id": user_id, "household_id": household_id},
+            files={"file": ("voice.wav", _wav_bytes(), "audio/wav")},
+        )
+        assert r.status_code == 200
+
+    def test_deletes_user_across_all_households(self, client, temp_profile_dir):
+        self._enroll(client, 42, "h1")
+        self._enroll(client, 42, "h2")
+        self._enroll(client, 99, "h1")  # a different user, must survive
+
+        resp = client.delete("/voice-profiles/user/42")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["user_id"] == 42
+        assert set(body["households"]) == {"h1", "h2"}
+
+        assert not (temp_profile_dir / "h1" / hash_user_id(42)).exists()
+        assert not (temp_profile_dir / "h2" / hash_user_id(42)).exists()
+        assert (temp_profile_dir / "h1" / hash_user_id(99)).exists()
+
+    def test_removes_legacy_single_file_profile(self, client, temp_profile_dir):
+        legacy = temp_profile_dir / "h1" / (hash_user_id(7) + ".wav")
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        legacy.write_bytes(_wav_bytes())
+
+        resp = client.delete("/voice-profiles/user/7")
+
+        assert resp.status_code == 200
+        assert resp.json()["households"] == ["h1"]
+        assert not legacy.exists()
+
+    def test_no_profiles_is_idempotent(self, client):
+        resp = client.delete("/voice-profiles/user/12345")
+        assert resp.status_code == 200
+        assert resp.json()["households"] == []

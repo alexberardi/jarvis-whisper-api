@@ -27,6 +27,7 @@ from jarvis_auth_client.models import AppAuthResult
 from app.deps import verify_app_auth
 from app.utils import (
     PROFILE_DIR,
+    delete_all_user_profiles,
     hash_user_id,
     invalidate_household_cache,
     legacy_profile_path,
@@ -135,6 +136,30 @@ async def delete_voice_profile(
 
     logger.info(f"Deleted voice profile for user_id={user_id} in household={household_id}")
     return {"status": "deleted", "user_id": user_id, "household_id": household_id}
+
+
+@router.delete("/user/{user_id}")
+async def delete_all_voice_profiles_for_user(
+    user_id: int,
+    auth: AppAuthResult = Depends(verify_app_auth),
+):
+    """Delete a user's voice profiles across ALL households (account deletion).
+
+    Enrolled voiceprints are biometric data; a "permanent delete" must remove them
+    everywhere, not just in the caller's active household. No household_id is
+    required — profiles are stored per-household on disk, so we purge every one.
+    Idempotent: a user with no profiles returns 200 with ``households: []``.
+    """
+    affected = delete_all_user_profiles(user_id)
+    for household_id in affected:
+        invalidate_household_cache(household_id)
+
+    logger.info(
+        "Deleted all voice profiles for user_id=%s across households=%s",
+        user_id,
+        affected,
+    )
+    return {"status": "deleted", "user_id": user_id, "households": affected}
 
 
 @router.get("/{user_id}/samples")
