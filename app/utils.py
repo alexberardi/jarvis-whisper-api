@@ -4,6 +4,7 @@ import hashlib
 import logging
 import math
 import os
+import shutil
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -384,6 +385,38 @@ def user_profile_dir(household_id: str, user_id: int) -> Path:
 def legacy_profile_path(household_id: str, user_id: int) -> Path:
     """Path to the legacy single-file profile location."""
     return PROFILE_DIR / household_id / (hash_user_id(user_id) + ".wav")
+
+
+def delete_all_user_profiles(user_id: int) -> list[str]:
+    """Delete a user's voice profiles across EVERY household (account deletion).
+
+    Profiles live at ``voice_profiles/{household_id}/{hash(user_id)}[/ | .wav]``,
+    so a user can be purged everywhere without knowing their household list — scan
+    each household directory for this user's hashed id and remove the per-user
+    directory and any legacy single-file profile. Returns the household_ids that
+    were touched so their in-memory speaker caches can be invalidated. Idempotent:
+    a user with no enrolled profiles returns ``[]``.
+    """
+    if not PROFILE_DIR.is_dir():
+        return []
+
+    target = hash_user_id(user_id)
+    affected: list[str] = []
+    for household_dir in PROFILE_DIR.iterdir():
+        if not household_dir.is_dir():
+            continue
+        user_dir = household_dir / target
+        legacy = household_dir / (target + ".wav")
+        removed = False
+        if user_dir.is_dir():
+            shutil.rmtree(user_dir)
+            removed = True
+        if legacy.exists():
+            legacy.unlink()
+            removed = True
+        if removed:
+            affected.append(household_dir.name)
+    return affected
 
 
 def migrate_legacy_profile_to_directory(household_id: str, user_id: int) -> None:
