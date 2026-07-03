@@ -1,11 +1,11 @@
+import asyncio
 import logging
 import os
-import shutil
 import tempfile
 import time
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Query, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from app.audio import preprocess_audio
@@ -147,8 +147,39 @@ def health():
     return status
 
 
+# Cap transcription uploads. A wake+command WAV is well under 1 MB; anything near
+# this is abuse or a bug, and copying/transcribing a huge file would block the
+# single-model STT path for every other caller.
+MAX_UPLOAD_BYTES = int(os.getenv("WHISPER_MAX_UPLOAD_BYTES", str(25 * 1024 * 1024)))
+
+
+def _spool_upload(upload: UploadFile) -> str:
+    """Copy an upload to a temp .wav in chunks, rejecting (413) past the cap.
+
+    Cleans up the temp file if the cap is hit, so an oversized upload can't leak
+    disk. Returns the temp path on success.
+    """
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        tmp_path = tmp.name
+        total = 0
+        try:
+            while True:
+                chunk = upload.file.read(1 << 16)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_UPLOAD_BYTES:
+                    raise HTTPException(status_code=413, detail="Audio upload too large")
+                tmp.write(chunk)
+        except HTTPException:
+            os.unlink(tmp_path)
+            raise
+    return tmp_path
+
+
 @app.post("/transcribe")
 async def transcribe(
+    request: Request,
     file: UploadFile = File(...),
     speaker_audio: UploadFile | None = File(default=None),
     prompt: str | None = Query(default=None, description="Initial prompt to guide transcription"),
@@ -186,16 +217,23 @@ async def transcribe(
         f"for household {auth.context.household_id}, node {auth.context.node_id}"
     )
 
+    # Reject oversized uploads up front (honest Content-Length) — a huge clip
+    # would block the single-model STT path for everyone. The per-file streaming
+    # cap in _spool_upload backstops a missing or lying Content-Length.
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Audio upload too large")
+
     t_start = time.perf_counter()
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        shutil.copyfileobj(file.file, tmp)
-        tmp_path = tmp.name
+    tmp_path = _spool_upload(file)
 
     speaker_audio_path: str | None = None
     if speaker_audio is not None:
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_sp:
-            shutil.copyfileobj(speaker_audio.file, tmp_sp)
-            speaker_audio_path = tmp_sp.name
+        try:
+            speaker_audio_path = _spool_upload(speaker_audio)
+        except HTTPException:
+            os.unlink(tmp_path)
+            raise
     t_saved = time.perf_counter()
 
     processed_path: str | None = None
@@ -215,7 +253,10 @@ async def transcribe(
         # Use processed file if available, otherwise original
         whisper_input = processed_path if processed_path else tmp_path
 
-        text, segments = run_whisper(
+        # Run the (blocking, GPU/CPU-bound) transcription off the event loop so a
+        # long clip doesn't stall every other in-flight request on this worker.
+        text, segments = await asyncio.to_thread(
+            run_whisper,
             whisper_input,
             prompt=prompt,
             temperature=temperature,
@@ -238,8 +279,10 @@ async def transcribe(
             # (typically wake-word + command, for better short-clip recognition);
             # otherwise fall back to the transcription audio.
             speaker_input_path = speaker_audio_path or tmp_path
-            # household_member_ids comes from context headers, passed by command-center
-            speaker_result = recognize_speaker(
+            # household_member_ids comes from context headers, passed by command-center.
+            # Off the event loop — embedding is CPU/GPU-bound like transcription.
+            speaker_result = await asyncio.to_thread(
+                recognize_speaker,
                 speaker_input_path,
                 household_id=auth.context.household_id or "",
                 member_ids=auth.context.household_member_ids,
