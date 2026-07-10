@@ -28,6 +28,18 @@ fi
 # Avoid Objective-C fork-safety abort when uvicorn workers exec under launchd
 export OBJC_DISABLE_INITIALIZE_FORK_SAFETY="${OBJC_DISABLE_INITIALIZE_FORK_SAFETY:-YES}"
 
+# Native macOS DB wiring: postgres runs in Docker, published on the host at
+# 127.0.0.1:${POSTGRES_PORT}. Docker services get DATABASE_URL injected by the
+# compose generator; native services must build it from the shared .env creds
+# (DB_USER + POSTGRES_PASSWORD). Only set when not already provided, so an
+# explicit override still wins.
+if [[ -z "${DATABASE_URL:-}" ]]; then
+    export DATABASE_URL="postgresql+psycopg2://${DB_USER:-jarvis}:${POSTGRES_PASSWORD:-}@127.0.0.1:${POSTGRES_PORT:-5432}/jarvis_whisper"
+fi
+if [[ -z "${MIGRATIONS_DATABASE_URL:-}" ]]; then
+    export MIGRATIONS_DATABASE_URL="$DATABASE_URL"
+fi
+
 if [[ ! -x "$PY" ]]; then
     # Pick a Python >=3.11 (this project requires it). macOS system python3 is
     # usually 3.9, and `brew install python@3.11` provides `python3.11` — NOT a
