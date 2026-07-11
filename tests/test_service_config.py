@@ -95,9 +95,12 @@ class TestGetUrl:
     @patch.object(service_config, "_has_config_client", False)
     @patch.dict(os.environ, {}, clear=True)
     def test_get_url_missing_service_raises(self) -> None:
-        """_get_url should raise ValueError when service cannot be discovered."""
+        """_get_url should raise ValueError for a service with no discovery source
+        — not resolvable via config-client, no env-var fallback, and no localhost
+        _DEFAULTS entry. (jarvis-auth now resolves via _DEFAULTS, so this uses an
+        unmapped service name to exercise the raise path.)"""
         with pytest.raises(ValueError, match="Cannot discover"):
-            service_config._get_url("jarvis-auth")
+            service_config._get_url("jarvis-nonexistent")
 
     @patch.object(service_config, "_has_config_client", True)
     @patch.object(
