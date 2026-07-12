@@ -38,6 +38,15 @@ if [[ -z "${JARVIS_CONFIG_URL:-}" ]]; then
     export JARVIS_CONFIG_URL="http://localhost:${CONFIG_SERVICE_PORT:-7700}"
 fi
 
+# Native macOS runs OFF-container, so config-service's default host.docker.internal
+# URLs are unreachable here. Request the "external" URL style (localhost) so that
+# per-request auth resolution (app/deps.py's require_app_auth(), which resolves the
+# auth URL on every call — unlike main.py which captures it at import) reaches
+# jarvis-auth. Without this, /transcribe 401s with "Auth service unavailable"
+# (host.docker.internal unresolvable) even though /health is 200. Requires
+# jarvis-config-client >= 0.2.1 — 0.2.0 silently ignores the style param.
+export JARVIS_CONFIG_URL_STYLE="${JARVIS_CONFIG_URL_STYLE:-external}"
+
 # DB: postgres runs in Docker, published on the host at 127.0.0.1:${POSTGRES_PORT}.
 # Build DATABASE_URL from the shared .env creds (DB_USER + POSTGRES_PASSWORD).
 if [[ -z "${DATABASE_URL:-}" ]]; then
