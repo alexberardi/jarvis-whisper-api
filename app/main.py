@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from app.audio import preprocess_audio
 from app.deps import verify_app_auth
+from app.version import __version__
 from app.exceptions import AudioProcessingError, WhisperTranscriptionError
 from app.utils import recognize_speaker, run_whisper, speaker_recognition_status
 from jarvis_auth_client.models import AppAuthResult
@@ -139,7 +140,7 @@ def pong():
 
 @app.get("/health")
 def health():
-    status: dict[str, object] = {"status": "healthy"}
+    status: dict[str, object] = {"status": "healthy", "version": __version__}
     try:
         status["speaker"] = speaker_recognition_status()
     except Exception as e:  # noqa: BLE001 — observability must never break liveness
