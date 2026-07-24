@@ -130,6 +130,21 @@ async def startup_event():
             "/transcribe returns speaker.user_id=None. Set it true to enable."
         )
 
+    # Pre-warm the affect DSP if enabled — the first librosa/numba call JITs for
+    # ~1-2s; do it here so no live command eats it. Non-fatal (first request
+    # would just pay the cost). Lazy import keeps librosa out of memory when off.
+    if get_settings_service().get_bool("voice.emotion_enabled", False):
+        try:
+            from app.affect import warmup as _affect_warmup
+            t0 = time.perf_counter()
+            _affect_warmup()
+            logger.info(
+                "Affect analysis pre-warmed in %d ms",
+                int((time.perf_counter() - t0) * 1000),
+            )
+        except Exception as e:  # noqa: BLE001 — pre-warm must never block startup
+            logger.warning(f"Affect pre-warm failed: {type(e).__name__}: {e}")
+
     logger.info("Jarvis Whisper API service started")
 
 
@@ -268,37 +283,52 @@ async def transcribe(
         logger.info(f"Transcribed {len(text)} chars, {len(segments)} segments for node {auth.context.node_id}")
 
         speaker_response: dict[str, int | float | None] = {"user_id": None, "confidence": 0.0}
-        speaker_enabled = get_settings_service().get_bool("voice.recognition_enabled", False)
+        affect_response: dict[str, object] | None = None
+
+        _settings = get_settings_service()
+        speaker_enabled = _settings.get_bool("voice.recognition_enabled", False)
+        emotion_enabled = _settings.get_bool("voice.emotion_enabled", False)
         # The caller can opt out of the voice pass when it already knows who is
         # speaking from authentication (mobile push-to-talk identifies the user
         # by JWT, so voice matching is redundant — and a memberless request
         # would needlessly exercise the speaker path).
         run_speaker = speaker_enabled and speaker_recognition
 
+        # Speaker recognition runs FIRST — its resolved user_id keys the affect
+        # pass's per-speaker pitch baseline (arousal is judged relative to the
+        # speaker's OWN resting pitch). Both run off the event loop; affect is only
+        # ~10-20ms, so running it after the speaker embed rather than concurrently
+        # costs a sliver in exchange for a speaker-relative read. Off entirely →
+        # nothing extra runs and the transcript path is unchanged.
+        _speaker_user_id: int | None = None
         if run_speaker:
             # Use the dedicated speaker-pass audio if the caller supplied one
             # (typically wake-word + command, for better short-clip recognition);
-            # otherwise fall back to the transcription audio.
+            # otherwise fall back to the transcription audio. household_member_ids
+            # comes from context headers, passed by command-center.
             speaker_input_path = speaker_audio_path or tmp_path
-            # household_member_ids comes from context headers, passed by command-center.
-            # Off the event loop — embedding is CPU/GPU-bound like transcription.
-            speaker_result = await asyncio.to_thread(
-                recognize_speaker,
-                speaker_input_path,
-                household_id=auth.context.household_id or "",
-                member_ids=auth.context.household_member_ids,
-            )
-            speaker_response = {
-                "user_id": speaker_result.user_id,
-                "confidence": speaker_result.confidence,
-            }
-            logger.info(
-                "Speaker match: user_id=%s confidence=%.3f node=%s household=%s",
-                speaker_result.user_id,
-                speaker_result.confidence,
-                auth.context.node_id,
-                auth.context.household_id,
-            )
+            try:
+                speaker_result = await asyncio.to_thread(
+                    recognize_speaker,
+                    speaker_input_path,
+                    household_id=auth.context.household_id or "",
+                    member_ids=auth.context.household_member_ids,
+                )
+            except Exception as e:  # noqa: BLE001 — speaker failure must not break STT
+                logger.warning("speaker pass failed: %s", e)
+            else:
+                _speaker_user_id = speaker_result.user_id
+                speaker_response = {
+                    "user_id": speaker_result.user_id,
+                    "confidence": speaker_result.confidence,
+                }
+                logger.info(
+                    "Speaker match: user_id=%s confidence=%.3f node=%s household=%s",
+                    speaker_result.user_id,
+                    speaker_result.confidence,
+                    auth.context.node_id,
+                    auth.context.household_id,
+                )
         elif not speaker_enabled:
             # Recognition is off — make that visible (rate-limited) so a
             # disabled flag isn't mistaken for a model that just never matches.
@@ -314,14 +344,48 @@ async def transcribe(
         # else: recognition is enabled but the caller passed
         # speaker_recognition=false (it identifies the speaker itself) — skip
         # the pass silently; user_id stays None.
+
+        if emotion_enabled:
+            # Lazy import so librosa never loads when the feature is off. GUARDED:
+            # librosa is optional at the native level (like resemblyzer/speechbrain
+            # in utils.py) — a slim or broken build could fail this import, and STT
+            # must survive. On failure we degrade to no-affect, never 500 the
+            # transcript. Affect reads the RAW command audio (tmp_path), never the
+            # RMS-normalized preprocessed copy, and is keyed by the recognized
+            # speaker for the per-speaker pitch baseline.
+            try:
+                from app.affect import analyze_affect
+            except Exception as e:  # noqa: BLE001 — affect must never break STT
+                logger.warning("affect analysis unavailable (import failed): %s", e)
+            else:
+                try:
+                    _affect_out = await asyncio.to_thread(
+                        analyze_affect, tmp_path, _speaker_user_id
+                    )
+                except Exception as e:  # noqa: BLE001 — affect must never break STT
+                    logger.warning("affect pass failed: %s", e)
+                else:
+                    # Log EVERY read (+ raw features) for threshold tuning,
+                    # independent of whether it clears the surface gate.
+                    logger.info(
+                        "[affect] arousal=%s conf=%.2f read=%r features=%s node=%s",
+                        _affect_out.arousal,
+                        _affect_out.confidence,
+                        _affect_out.read,
+                        _affect_out.features,
+                        auth.context.node_id,
+                    )
+                    _min_conf = _settings.get_float("voice.emotion_min_confidence", 0.45)
+                    affect_response = _affect_out.to_response(min_confidence=_min_conf)
+
         t_speaker = time.perf_counter()
 
         logger.info(
-            "transcribe phases (ms): save=%d preproc=%d whisper=%d speaker=%d total=%d",
+            "transcribe phases (ms): save=%d preproc=%d whisper=%d voice=%d total=%d",
             int((t_saved - t_start) * 1000),
             int((t_preproc - t_saved) * 1000),
             int((t_whisper - t_preproc) * 1000),
-            int((t_speaker - t_whisper) * 1000) if run_speaker else 0,
+            int((t_speaker - t_whisper) * 1000) if (run_speaker or emotion_enabled) else 0,
             int((t_speaker - t_start) * 1000),
         )
 
@@ -329,6 +393,7 @@ async def transcribe(
             "text": text,
             "segments": segments,
             "speaker": speaker_response,
+            "affect": affect_response,
         }
 
     except WhisperTranscriptionError as e:

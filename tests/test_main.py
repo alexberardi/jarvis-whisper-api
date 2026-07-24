@@ -175,7 +175,11 @@ class TestTranscribeEndpoint:
         """POST /transcribe should include speaker info when recognition enabled."""
         from app.utils import SpeakerResult
 
-        mock_settings.return_value.get_bool.return_value = True
+        # recognition on, emotion off (explicit — a blanket True would also flip
+        # emotion and run the real affect DSP on the fake WAV).
+        mock_settings.return_value.get_bool.side_effect = (
+            lambda key, default=False: key == "voice.recognition_enabled"
+        )
         mock_recognize.return_value = SpeakerResult(user_id=42, confidence=0.92)
         wav_data = io.BytesIO(b"RIFF" + b"\x00" * 100)
         response = client.post(
@@ -201,7 +205,11 @@ class TestTranscribeEndpoint:
 
         Mirrors mobile push-to-talk, which identifies the speaker by JWT.
         """
-        mock_settings.return_value.get_bool.return_value = True
+        # recognition on, emotion off (explicit — a blanket True would also flip
+        # emotion and run the real affect DSP on the fake WAV).
+        mock_settings.return_value.get_bool.side_effect = (
+            lambda key, default=False: key == "voice.recognition_enabled"
+        )
         wav_data = io.BytesIO(b"RIFF" + b"\x00" * 100)
         response = client.post(
             "/transcribe?speaker_recognition=false",
@@ -226,6 +234,133 @@ class TestTranscribeEndpoint:
         assert call_kwargs["temperature"] == 0.5
         assert call_kwargs["temperature_inc"] == 0.1
         assert call_kwargs["beam_size"] == 8
+
+
+class TestTranscribeAffect:
+    """POST /transcribe acoustic-affect block (opt-in via voice.emotion_enabled)."""
+
+    @staticmethod
+    def _settings(*, recognition=False, emotion=False, min_conf=0.45):
+        """A settings stub whose get_bool answers per-key."""
+        svc = MagicMock()
+        svc.get_bool.side_effect = lambda key, default=False: {
+            "voice.recognition_enabled": recognition,
+            "voice.emotion_enabled": emotion,
+        }.get(key, default)
+        svc.get_float.return_value = min_conf
+        return svc
+
+    @patch("app.affect.analyze_affect")
+    @patch("app.main.run_whisper", return_value=("Hello", []))
+    @patch("app.main.get_settings_service")
+    def test_affect_surfaced_when_enabled(
+        self, mock_settings, mock_whisper, mock_affect, client: TestClient
+    ) -> None:
+        from app.affect import AffectResult
+
+        mock_settings.return_value = self._settings(emotion=True)
+        mock_affect.return_value = AffectResult(
+            read="subdued / low-energy — flat, even pitch",
+            arousal="low",
+            confidence=0.8,
+            features={"duration_s": 3.0},
+        )
+        wav_data = io.BytesIO(b"RIFF" + b"\x00" * 100)
+        response = client.post("/transcribe", files={"file": ("t.wav", wav_data, "audio/wav")})
+        assert response.status_code == 200
+        affect = response.json()["affect"]
+        assert affect == {
+            "read": "subdued / low-energy — flat, even pitch",
+            "arousal": "low",
+            "confidence": 0.8,
+        }
+
+    @patch("app.affect.analyze_affect")
+    @patch("app.main.run_whisper", return_value=("Hello", []))
+    @patch("app.main.get_settings_service")
+    def test_no_affect_when_disabled(
+        self, mock_settings, mock_whisper, mock_affect, client: TestClient
+    ) -> None:
+        mock_settings.return_value = self._settings(emotion=False)
+        wav_data = io.BytesIO(b"RIFF" + b"\x00" * 100)
+        response = client.post("/transcribe", files={"file": ("t.wav", wav_data, "audio/wav")})
+        assert response.status_code == 200
+        assert response.json()["affect"] is None
+        mock_affect.assert_not_called()  # feature off → analysis never runs
+
+    @patch("app.affect.analyze_affect")
+    @patch("app.main.run_whisper", return_value=("Hello", []))
+    @patch("app.main.get_settings_service")
+    def test_low_confidence_affect_is_suppressed(
+        self, mock_settings, mock_whisper, mock_affect, client: TestClient
+    ) -> None:
+        from app.affect import AffectResult
+
+        mock_settings.return_value = self._settings(emotion=True, min_conf=0.45)
+        mock_affect.return_value = AffectResult(
+            read="even", arousal="neutral", confidence=0.20, features={},
+        )
+        wav_data = io.BytesIO(b"RIFF" + b"\x00" * 100)
+        response = client.post("/transcribe", files={"file": ("t.wav", wav_data, "audio/wav")})
+        assert response.status_code == 200
+        assert response.json()["affect"] is None  # below min_confidence → withheld
+
+    @patch("app.affect.analyze_affect", side_effect=RuntimeError("boom"))
+    @patch("app.main.run_whisper", return_value=("Hello", []))
+    @patch("app.main.get_settings_service")
+    def test_affect_failure_never_breaks_transcript(
+        self, mock_settings, mock_whisper, mock_affect, client: TestClient
+    ) -> None:
+        # A crash in the affect pass must not fail the transcription (it runs
+        # concurrently under return_exceptions).
+        mock_settings.return_value = self._settings(emotion=True)
+        wav_data = io.BytesIO(b"RIFF" + b"\x00" * 100)
+        response = client.post("/transcribe", files={"file": ("t.wav", wav_data, "audio/wav")})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["text"] == "Hello"
+        assert body["affect"] is None
+
+    @patch("app.main.run_whisper", return_value=("Hello", []))
+    @patch("app.main.get_settings_service")
+    def test_affect_import_failure_never_breaks_transcript(
+        self, mock_settings, mock_whisper, client: TestClient
+    ) -> None:
+        # Regression for the confirmed high-sev finding: if `from app.affect
+        # import analyze_affect` fails (librosa missing / broken native build),
+        # STT must still return 200 with affect null — never a 500.
+        import sys
+
+        mock_settings.return_value = self._settings(emotion=True)
+        wav_data = io.BytesIO(b"RIFF" + b"\x00" * 100)
+        with patch.dict(sys.modules, {"app.affect": None}):  # makes the import raise
+            response = client.post("/transcribe", files={"file": ("t.wav", wav_data, "audio/wav")})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["text"] == "Hello"
+        assert body["affect"] is None
+
+    @patch("app.affect.analyze_affect")
+    @patch("app.main.recognize_speaker")
+    @patch("app.main.run_whisper", return_value=("Hello", []))
+    @patch("app.main.get_settings_service")
+    def test_speaker_and_affect_run_together(
+        self, mock_settings, mock_whisper, mock_recognize, mock_affect, client: TestClient
+    ) -> None:
+        from app.affect import AffectResult
+        from app.utils import SpeakerResult
+
+        mock_settings.return_value = self._settings(recognition=True, emotion=True)
+        mock_recognize.return_value = SpeakerResult(user_id=7, confidence=0.9)
+        mock_affect.return_value = AffectResult(
+            read="animated — animated pitch", arousal="high", confidence=0.7, features={},
+        )
+        wav_data = io.BytesIO(b"RIFF" + b"\x00" * 100)
+        response = client.post("/transcribe", files={"file": ("t.wav", wav_data, "audio/wav")})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["speaker"]["user_id"] == 7
+        assert body["affect"]["arousal"] == "high"
 
 
 class TestSetupRemoteLogging:
