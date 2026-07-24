@@ -181,6 +181,35 @@ SETTINGS_DEFINITIONS: list[SettingDefinition] = [
         description="Clips longer than this use voice.threshold_long.",
     ),
 
+    # Acoustic affect (mood) — a prosodic read of HOW something was said, for the
+    # LLM to fuse with WHAT was said. Opt-in, off by default; runs concurrently
+    # with the speaker pass so it adds no wall-clock. See app/affect.py.
+    SettingDefinition(
+        key="voice.emotion_enabled",
+        category="voice",
+        value_type="bool",
+        default=False,
+        description=(
+            "Analyze the acoustic affect (arousal/energy) of the command audio "
+            "and return it as an `affect` block on the transcribe response. "
+            "Default OFF: when off, the analysis never runs (the response still "
+            "carries `affect: null`). Sensitive inference — kept local, "
+            "per-household opt-in, and not persisted."
+        ),
+    ),
+    SettingDefinition(
+        key="voice.emotion_min_confidence",
+        category="voice",
+        value_type="float",
+        default=0.45,
+        description=(
+            "Minimum affect confidence (0-1) before the read is surfaced on the "
+            "response. Below this, `affect` is null — a shaky read is worse than "
+            "none, so we bias toward silence. Every read is still logged for "
+            "threshold tuning regardless of this gate."
+        ),
+    ),
+
     # Server configuration
     SettingDefinition(
         key="server.port",
