@@ -105,7 +105,13 @@ jobs:
           # Per-variant cache scope so CPU/CUDA/ROCm builds don't trample each
           # other's layers. Skip cache-from on tag pushes to avoid stale layers.
           cache-from: ${{ !startsWith(github.ref, 'refs/tags/') && format('type=gha,scope={0}', matrix.cache_scope) || '' }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.cache_scope }}
+          # ignore-error: a cache-export failure must NOT fail a successful
+          # build+push. The ROCm image is large enough that its mode=max cache
+          # blows past the 10GB GHA-cache limit and the export dies with
+          # `not_found` (2026-07-24) — after the image had already pushed to
+          # GHCR. The cache is only a build-time speedup; losing it is fine,
+          # failing the publish is not.
+          cache-to: type=gha,mode=max,scope=${{ matrix.cache_scope }},ignore-error=true
 
       - name: Output image tags
         run: |
