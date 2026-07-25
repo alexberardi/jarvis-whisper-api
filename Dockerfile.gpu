@@ -111,9 +111,30 @@ COPY pyproject.toml .
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu124 torch torchaudio \
     && LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH} \
+       CUDACXX=/usr/local/cuda/bin/nvcc \
        CMAKE_CUDA_ARCHITECTURES=${WHISPER_CUDA_ARCH} \
        GGML_CUDA=1 GGML_NATIVE=0 pip install --no-cache-dir --no-binary pywhispercpp pywhispercpp==1.4.1 \
     && pip install --no-cache-dir .
+
+# GUARD: fail the build if pywhispercpp did NOT compile the CUDA backend.
+#
+# The GPU-vs-CPU decision is baked into the wheel at build time. pywhispercpp
+# vendors its own whisper.cpp (unpinned; branch=master) and a newer vendored
+# revision once silently skipped the CUDA backend during cmake configure — no
+# libggml-cuda was produced, so the wheel fell back to a CPU-only ggml. That
+# image shipped to prod and ran STT on CPU at ~10s/utterance, because nothing
+# checked. CUDACXX (above) pins nvcc so whisper.cpp's CUDA detection can't miss
+# it; this guard is the backstop. Presence of libggml-cuda proves CUDA was
+# compiled in — no GPU is needed at build time to verify it, so it is CI-safe.
+RUN PYLIBS=/usr/local/lib/python3.11/dist-packages/pywhispercpp.libs; \
+    if ls "$PYLIBS"/libggml-cuda*.so >/dev/null 2>&1; then \
+      echo "OK: pywhispercpp CUDA backend present -> $(ls "$PYLIBS"/libggml-cuda*.so)"; \
+    else \
+      echo "FATAL: pywhispercpp built WITHOUT a CUDA backend (no libggml-cuda in $PYLIBS)."; \
+      echo "This would silently run STT on CPU (~10s/utterance). Failing the build."; \
+      echo "Contents of $PYLIBS:"; ls -la "$PYLIBS" 2>/dev/null || true; \
+      exit 1; \
+    fi
 
 # pywhispercpp's wheel-repair step bundles a hash-renamed copy of the
 # CUDA driver stub (libcuda-<hash>.so) inside the wheel. The renamed
@@ -124,9 +145,14 @@ RUN pip install --no-cache-dir --upgrade pip \
 # at container start. The link resolves at load-time, so libggml-cuda
 # picks up the real driver via its bundled NEEDED entry.
 RUN set -e; \
+    found=0; \
     for f in /usr/local/lib/python3.11/dist-packages/pywhispercpp.libs/libcuda-*.so; do \
+      [ -e "$f" ] || continue; \
       ln -sf /usr/lib/x86_64-linux-gnu/libcuda.so.1 "$f"; \
-    done
+      echo "relinked bundled CUDA driver stub -> real libcuda.so.1: $f"; \
+      found=1; \
+    done; \
+    [ "$found" = 1 ] || echo "WARN: no bundled libcuda-<hash>.so to relink (glob unmatched); libggml-cuda will resolve libcuda from the system path at runtime."
 
 ENV PORT=7706 \
     WHISPER_MODEL=/root/whisper.cpp/models/ggml-base.en.bin \
