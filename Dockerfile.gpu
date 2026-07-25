@@ -118,33 +118,48 @@ COPY pyproject.toml .
 # The standalone whisper-cli build above already passes these same flags for the
 # same reason; the pywhispercpp build needs them too. setup.py forwards each env
 # var as one argv element, so the embedded space in the value is preserved.
+# PYWHISPERCPP_VERSION is derived from pyproject.toml, NOT hardcoded. This is
+# load-bearing: `pip install .` below installs the app, whose pyproject pins an
+# exact pywhispercpp. If the source build here used a DIFFERENT version, that
+# second install would satisfy the app's pin by pulling the CPU-only PyPI wheel
+# and *clobber* this CUDA source build — silent CPU STT (the 2026-07 outage:
+# Dockerfile built 1.4.1, pyproject pinned 1.5.0). Deriving the version keeps
+# them in lockstep so the source build survives the app install.
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu124 torch torchaudio \
+    && PYWHISPERCPP_VERSION="$(sed -n 's/.*pywhispercpp==\([0-9][0-9.]*\).*/\1/p' pyproject.toml | head -1)" \
+    && test -n "$PYWHISPERCPP_VERSION" || { echo "FATAL: could not read pywhispercpp==<ver> from pyproject.toml"; exit 1; } \
+    && echo "Source-building pywhispercpp==${PYWHISPERCPP_VERSION} with CUDA (matches pyproject.toml)" \
     && LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH} \
        CUDACXX=/usr/local/cuda/bin/nvcc \
        CMAKE_CUDA_ARCHITECTURES=${WHISPER_CUDA_ARCH} \
        CMAKE_EXE_LINKER_FLAGS="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs -L/usr/local/cuda/lib64/stubs" \
        CMAKE_SHARED_LINKER_FLAGS="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs -L/usr/local/cuda/lib64/stubs" \
-       GGML_CUDA=1 GGML_NATIVE=0 pip install -v --no-cache-dir --no-binary pywhispercpp pywhispercpp==1.4.1 \
+       GGML_CUDA=1 GGML_NATIVE=0 pip install --no-cache-dir --no-binary pywhispercpp "pywhispercpp==${PYWHISPERCPP_VERSION}" \
     && pip install --no-cache-dir .
 
-# GUARD: fail the build if pywhispercpp did NOT compile the CUDA backend.
+# GUARD: fail the build if the installed pywhispercpp has NO CUDA backend.
 #
-# The GPU-vs-CPU decision is baked into the wheel at build time. pywhispercpp
-# vendors its own whisper.cpp (unpinned; branch=master) and a newer vendored
-# revision once silently skipped the CUDA backend during cmake configure — no
-# libggml-cuda was produced, so the wheel fell back to a CPU-only ggml. That
-# image shipped to prod and ran STT on CPU at ~10s/utterance, because nothing
-# checked. CUDACXX (above) pins nvcc so whisper.cpp's CUDA detection can't miss
-# it; this guard is the backstop. Presence of libggml-cuda proves CUDA was
-# compiled in — no GPU is needed at build time to verify it, so it is CI-safe.
-RUN PYLIBS=/usr/local/lib/python3.11/dist-packages/pywhispercpp.libs; \
-    if ls "$PYLIBS"/libggml-cuda*.so >/dev/null 2>&1; then \
-      echo "OK: pywhispercpp CUDA backend present -> $(ls "$PYLIBS"/libggml-cuda*.so)"; \
+# The GPU-vs-CPU decision is baked in at build time; a CPU-only pywhispercpp
+# shipped to prod once and ran STT on CPU at ~10s/utterance because nothing
+# checked (2026-07 outage). Two independent failure modes this catches:
+#   1. ggml silently disables CUDA at configure time (missing stub linker flags).
+#   2. `pip install .` clobbers the CUDA source build with a CPU PyPI wheel
+#      (pywhispercpp version mismatch between this Dockerfile and pyproject.toml).
+# libggml-cuda is present iff CUDA was compiled in AND survived to the final
+# install. Search all of site-packages: depending on the pywhispercpp version it
+# lands either in pywhispercpp.libs/ (auditwheel-vendored) or at the site-packages
+# root (1.5.0+). No GPU is needed to check for the artifact, so this is CI-safe.
+RUN SITE=/usr/local/lib/python3.11/dist-packages; \
+    HIT="$(find "$SITE" -maxdepth 2 -name 'libggml-cuda*.so*' 2>/dev/null | head -1)"; \
+    if [ -n "$HIT" ]; then \
+      echo "OK: pywhispercpp CUDA backend present -> $HIT"; \
     else \
-      echo "FATAL: pywhispercpp built WITHOUT a CUDA backend (no libggml-cuda in $PYLIBS)."; \
+      echo "FATAL: installed pywhispercpp has NO CUDA backend (no libggml-cuda under $SITE)."; \
+      echo "Either ggml disabled CUDA at build, or the app install pulled a CPU-only"; \
+      echo "pywhispercpp wheel over the source build (version mismatch vs pyproject.toml)."; \
       echo "This would silently run STT on CPU (~10s/utterance). Failing the build."; \
-      echo "Contents of $PYLIBS:"; ls -la "$PYLIBS" 2>/dev/null || true; \
+      echo "libggml* under site-packages:"; find "$SITE" -maxdepth 2 -name 'libggml*' 2>/dev/null || true; \
       exit 1; \
     fi
 
