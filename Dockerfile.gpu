@@ -108,12 +108,24 @@ COPY pyproject.toml .
 # With native off, ggml targets a portable x86-64 baseline that runs on any host.
 # pywhispercpp's setup.py turns every env var into a -D<KEY>=<VALUE> cmake arg,
 # so bare GGML_NATIVE=0 becomes -DGGML_NATIVE=0 (same path as GGML_CUDA=1).
+#
+# CMAKE_{EXE,SHARED}_LINKER_FLAGS point ggml's build at the libcuda *stub*.
+# This is REQUIRED, not optional: newer ggml (the version pywhispercpp 1.4.1
+# vendors, whisper.cpp 1.8.4) runs a CUDA compiler link-check at configure time.
+# No real driver exists at image-build time — only the stub — so without the
+# stub on the linker path that check fails to link libcuda and ggml *silently
+# disables CUDA*, producing a CPU-only wheel (the 2026-07 prod ~10s-STT outage).
+# The standalone whisper-cli build above already passes these same flags for the
+# same reason; the pywhispercpp build needs them too. setup.py forwards each env
+# var as one argv element, so the embedded space in the value is preserved.
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu124 torch torchaudio \
     && LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH} \
        CUDACXX=/usr/local/cuda/bin/nvcc \
        CMAKE_CUDA_ARCHITECTURES=${WHISPER_CUDA_ARCH} \
-       GGML_CUDA=1 GGML_NATIVE=0 pip install --no-cache-dir --no-binary pywhispercpp pywhispercpp==1.4.1 \
+       CMAKE_EXE_LINKER_FLAGS="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs -L/usr/local/cuda/lib64/stubs" \
+       CMAKE_SHARED_LINKER_FLAGS="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs -L/usr/local/cuda/lib64/stubs" \
+       GGML_CUDA=1 GGML_NATIVE=0 pip install -v --no-cache-dir --no-binary pywhispercpp pywhispercpp==1.4.1 \
     && pip install --no-cache-dir .
 
 # GUARD: fail the build if pywhispercpp did NOT compile the CUDA backend.
