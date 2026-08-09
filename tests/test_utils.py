@@ -584,6 +584,57 @@ class TestRecognizeSpeaker:
         assert result.user_id == 2
         assert result.confidence > 0.5
 
+    @patch("app.services.settings_service.get_settings_service")
+    @patch("app.utils.load_household_profiles")
+    @patch("app.utils._get_encoder")
+    def test_recognize_speaker_margin_gate_rejects_ambiguous(
+        self, mock_encoder: MagicMock, mock_load: MagicMock, mock_settings: MagicMock
+    ) -> None:
+        """With 2+ profiles, a winner-vs-runner-up margin below
+        voice.min_speaker_margin returns unknown even when above threshold —
+        the clip is too close to another member to safely commit an identity."""
+        mock_settings.return_value.get_float.return_value = 0.05
+        mock_load.return_value = {
+            1: np.array([1.0, 0.0, 0.0]),
+            4: np.array([0.0, 1.0, 0.0]),
+        }
+        # Query nearly equidistant: score(1)=0.72, score(4)=0.70 -> margin 0.02 < 0.05
+        mock_encoder.return_value.embed.return_value = np.array([0.72, 0.70, 0.0])
+        result = recognize_speaker("/tmp/test.wav", "household-1", [1, 4], threshold=0.5)
+        assert result.user_id is None  # abstain, don't guess Alex
+        assert result.confidence == pytest.approx(0.72)
+
+    @patch("app.services.settings_service.get_settings_service")
+    @patch("app.utils.load_household_profiles")
+    @patch("app.utils._get_encoder")
+    def test_recognize_speaker_margin_gate_accepts_clear_winner(
+        self, mock_encoder: MagicMock, mock_load: MagicMock, mock_settings: MagicMock
+    ) -> None:
+        """A clear winner (margin >= voice.min_speaker_margin) still matches."""
+        mock_settings.return_value.get_float.return_value = 0.05
+        mock_load.return_value = {
+            1: np.array([1.0, 0.0, 0.0]),
+            4: np.array([0.0, 1.0, 0.0]),
+        }
+        # score(1)=0.95, score(4)=0.10 -> margin 0.85 >> 0.05
+        mock_encoder.return_value.embed.return_value = np.array([0.95, 0.10, 0.0])
+        result = recognize_speaker("/tmp/test.wav", "household-1", [1, 4], threshold=0.5)
+        assert result.user_id == 1
+
+    @patch("app.services.settings_service.get_settings_service")
+    @patch("app.utils.load_household_profiles")
+    @patch("app.utils._get_encoder")
+    def test_recognize_speaker_margin_gate_skipped_single_profile(
+        self, mock_encoder: MagicMock, mock_load: MagicMock, mock_settings: MagicMock
+    ) -> None:
+        """Single-profile households have no runner-up — the gate is skipped so
+        a lone enrolled user still matches on threshold alone."""
+        mock_settings.return_value.get_float.return_value = 0.05
+        mock_load.return_value = {1: np.array([1.0, 0.0, 0.0])}
+        mock_encoder.return_value.embed.return_value = np.array([0.72, 0.0, 0.0])
+        result = recognize_speaker("/tmp/test.wav", "household-1", [1], threshold=0.5)
+        assert result.user_id == 1
+
     @patch("app.utils.load_household_profiles")
     @patch("app.utils._get_encoder")
     def test_recognize_speaker_logs_per_member_telemetry(
