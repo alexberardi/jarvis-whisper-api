@@ -125,8 +125,18 @@ COPY pyproject.toml .
 # and *clobber* this CUDA source build — silent CPU STT (the 2026-07 outage:
 # Dockerfile built 1.4.1, pyproject pinned 1.5.0). Deriving the version keeps
 # them in lockstep so the source build survives the app install.
+# torch/torchaudio are PINNED (not floating), and PyPI is kept as an extra index.
+# The cu124 index periodically prunes older transitive nvidia-* wheels; with a bare
+# --index-url (PyPI excluded) an UNPINNED torch resolves to a version whose
+# nvidia-cudnn-cu12 pin is no longer served there -> ResolutionImpossible (CI break
+# 2026-08-14). Pin to the last-known-good cu124 build and let --extra-index-url pull
+# transitive nvidia wheels from PyPI. `==2.6.0` still matches the `2.6.0+cu124` local
+# wheel (and outranks the plain PyPI `2.6.0`, so no CPU wheel sneaks in).
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu124 torch torchaudio \
+    && pip install --no-cache-dir \
+       --index-url https://download.pytorch.org/whl/cu124 \
+       --extra-index-url https://pypi.org/simple \
+       torch==2.6.0 torchaudio==2.6.0 \
     && PYWHISPERCPP_VERSION="$(sed -n 's/.*pywhispercpp==\([0-9][0-9.]*\).*/\1/p' pyproject.toml | head -1)" \
     && test -n "$PYWHISPERCPP_VERSION" || { echo "FATAL: could not read pywhispercpp==<ver> from pyproject.toml"; exit 1; } \
     && echo "Source-building pywhispercpp==${PYWHISPERCPP_VERSION} with CUDA (matches pyproject.toml)" \
