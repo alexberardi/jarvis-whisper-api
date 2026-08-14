@@ -123,6 +123,22 @@ SETTINGS_DEFINITIONS: list[SettingDefinition] = [
         ),
     ),
     SettingDefinition(
+        key="voice.min_speaker_margin",
+        category="voice",
+        value_type="float",
+        default=0.05,
+        description=(
+            "Open-set/ambiguity gate. With 2+ enrolled voices, a recognition is "
+            "REJECTED (returned as unknown speaker) when the winner's cosine "
+            "beats the runner-up household member by less than this margin — the "
+            "clip is too close to another member to safely commit an identity. "
+            "Guards against misattribution when far-field live audio collapses "
+            "cosines toward each other. 0 disables the gate. Calibrate from the "
+            "'margin=' values in the 'Speaker match' log line on real traffic; "
+            "raise if misID persists, lower if it abstains on genuine matches."
+        ),
+    ),
+    SettingDefinition(
         key="voice.short_cutoff_seconds",
         category="voice",
         value_type="float",

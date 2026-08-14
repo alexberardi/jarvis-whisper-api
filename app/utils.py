@@ -666,21 +666,45 @@ def recognize_speaker(
         for uid in sorted(scores, key=lambda k: scores[k], reverse=True)
     )
 
-    matched = best_score > threshold
+    # Open-set / ambiguity gate. With 2+ enrolled voices, a small winner-vs-
+    # runner-up margin means the clip is nearly as close to another household
+    # member as to the "winner" — so the top score alone can't safely commit an
+    # identity (a wrong match injects the wrong person's memories and mis-scopes
+    # per-user secrets). This bites in practice because the node's far-field
+    # live audio sits in a different acoustic domain than enrollment and
+    # collapses ALL cosines toward each other (prod 2026-08: enrolled voices are
+    # near-orthogonal offline — centroid cosine ~-0.04, per-sample margins
+    # 0.66-0.94 — yet live self-matches land ~0.41-0.53, so the winning margin
+    # shrinks and a non-target gets guessed as the closest enrolled speaker).
+    # Below the margin we abstain (unknown) rather than guess. Single-profile
+    # households have no runner-up, so the gate is skipped there. Tunable knob;
+    # raise it if misID persists, lower toward 0 to disable. Calibrate from the
+    # "margin=" values in this log line on real traffic.
+    from app.services.settings_service import get_settings_service
+    min_margin = get_settings_service().get_float("voice.min_speaker_margin", 0.05)
+    ambiguous = len(profiles) >= 2 and margin < min_margin
+
+    matched = best_score > threshold and not ambiguous
+    outcome = (
+        "MATCHED" if matched
+        else "ambiguous-margin" if (best_score > threshold and ambiguous)
+        else "no match"
+    )
     logger.info(
         "Speaker match: household=%s best_user=%s score=%.3f second=%.3f margin=%.3f "
-        "threshold=%.2f duration=%.2fs encoder=%s members=%d scores=[%s] → %s",
+        "threshold=%.2f min_margin=%.2f duration=%.2fs encoder=%s members=%d scores=[%s] → %s",
         household_id,
         best_user_id,
         best_score,
         second_best,
         margin,
         threshold,
+        min_margin,
         duration_s,
         encoder.name,
         len(profiles),
         scores_str,
-        "MATCHED" if matched else "no match",
+        outcome,
     )
 
     if matched:
