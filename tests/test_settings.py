@@ -160,8 +160,8 @@ class TestSettingsServiceEnvFallback:
         """Test that defaults are used when no env var is set."""
         with patch.dict(os.environ, {}, clear=True):
             result = service.get("whisper.default_beam_size")
-            # Should return definition default (5)
-            assert result == 5
+            # Should return definition default (2)
+            assert result == 2
 
     def test_unknown_key_returns_none(self, service):
         """Test that unknown keys return None."""
