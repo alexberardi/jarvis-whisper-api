@@ -202,7 +202,15 @@ async def transcribe(
     preprocess: bool = Query(default=False, description="Apply audio normalization and silence trimming"),
     temperature: float = Query(default=0.0, ge=0.0, le=1.0, description="Initial temperature for sampling (0.0-1.0)"),
     temperature_inc: float = Query(default=0.2, ge=0.0, le=1.0, description="Temperature increment on decode failure (0.0-1.0)"),
-    beam_size: int = Query(default=5, ge=1, le=16, description="Beam size for beam search (1-16)"),
+    beam_size: int | None = Query(
+        default=None,
+        ge=1,
+        le=16,
+        description=(
+            "Beam size for beam search (1-16). Omit to use the "
+            "whisper.default_beam_size setting."
+        ),
+    ),
     speaker_recognition: bool = Query(
         default=True,
         description=(
@@ -268,6 +276,12 @@ async def transcribe(
 
         # Use processed file if available, otherwise original
         whisper_input = processed_path if processed_path else tmp_path
+
+        # Resolve beam size from settings when the caller didn't pin one — an
+        # explicit query param always wins. Decode time scales with beam size,
+        # and STT sits on the voice hot path, so the default is tuned low.
+        if beam_size is None:
+            beam_size = get_settings_service().get_int("whisper.default_beam_size", 2)
 
         # Run the (blocking, GPU/CPU-bound) transcription off the event loop so a
         # long clip doesn't stall every other in-flight request on this worker.

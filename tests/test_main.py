@@ -235,6 +235,55 @@ class TestTranscribeEndpoint:
         assert call_kwargs["temperature_inc"] == 0.1
         assert call_kwargs["beam_size"] == 8
 
+    @patch("app.main.run_whisper", return_value=("Hello", []))
+    @patch("app.main.get_settings_service")
+    def test_transcribe_beam_size_defaults_from_settings(
+        self, mock_settings: MagicMock, mock_whisper: MagicMock, client: TestClient
+    ) -> None:
+        """Omitting beam_size must resolve it from whisper.default_beam_size."""
+        mock_settings.return_value.get_bool.return_value = False
+        mock_settings.return_value.get_int.return_value = 3
+        wav_data = io.BytesIO(b"RIFF" + b"\x00" * 100)
+        response = client.post(
+            "/transcribe",
+            files={"file": ("test.wav", wav_data, "audio/wav")},
+        )
+        assert response.status_code == 200
+        mock_settings.return_value.get_int.assert_called_once_with(
+            "whisper.default_beam_size", 2
+        )
+        assert mock_whisper.call_args[1]["beam_size"] == 3
+
+    @patch("app.main.run_whisper", return_value=("Hello", []))
+    @patch("app.main.get_settings_service")
+    def test_transcribe_explicit_beam_size_overrides_setting(
+        self, mock_settings: MagicMock, mock_whisper: MagicMock, client: TestClient
+    ) -> None:
+        """An explicit beam_size query param must win over the setting."""
+        mock_settings.return_value.get_bool.return_value = False
+        wav_data = io.BytesIO(b"RIFF" + b"\x00" * 100)
+        response = client.post(
+            "/transcribe?beam_size=8",
+            files={"file": ("test.wav", wav_data, "audio/wav")},
+        )
+        assert response.status_code == 200
+        mock_settings.return_value.get_int.assert_not_called()
+        assert mock_whisper.call_args[1]["beam_size"] == 8
+
+    @pytest.mark.parametrize("bad_beam_size", [0, 17])
+    @patch("app.main.run_whisper", return_value=("Hello", []))
+    def test_transcribe_beam_size_out_of_bounds_rejected(
+        self, mock_whisper: MagicMock, bad_beam_size: int, client: TestClient
+    ) -> None:
+        """beam_size outside 1-16 must be rejected with 422 before any STT work."""
+        wav_data = io.BytesIO(b"RIFF" + b"\x00" * 100)
+        response = client.post(
+            f"/transcribe?beam_size={bad_beam_size}",
+            files={"file": ("test.wav", wav_data, "audio/wav")},
+        )
+        assert response.status_code == 422
+        mock_whisper.assert_not_called()
+
 
 class TestTranscribeAffect:
     """POST /transcribe acoustic-affect block (opt-in via voice.emotion_enabled)."""

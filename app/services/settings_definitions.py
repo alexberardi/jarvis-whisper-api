@@ -55,8 +55,12 @@ SETTINGS_DEFINITIONS: list[SettingDefinition] = [
         key="whisper.default_beam_size",
         category="whisper.transcription",
         value_type="int",
-        default=5,
-        description="Default beam size for beam search (1-16)",
+        default=2,
+        description=(
+            "Default beam size for beam search (1-16), used when the caller "
+            "doesn't pass beam_size explicitly. Decode time scales with beam "
+            "size and STT sits on the voice hot path, so this defaults low."
+        ),
         env_fallback="WHISPER_DEFAULT_BEAM_SIZE",
     ),
     SettingDefinition(

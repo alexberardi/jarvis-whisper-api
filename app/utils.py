@@ -5,6 +5,7 @@ import logging
 import math
 import os
 import shutil
+import threading
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,14 @@ from scipy.signal import resample_poly
 from app.audio import load_audio, normalize_audio, trim_silence
 from app.exceptions import WhisperTranscriptionError
 from app.whisper_engine import get_model
+
+# whisper.cpp contexts are NOT thread-safe: two concurrent whisper_full calls
+# on the shared model abort the process (GGML_ASSERT(!sched->is_alloc)).
+# Concurrent /transcribe requests are real — the CC media proxy fires a
+# wake-clip verification transcribe alongside the command transcribe — so all
+# model access serializes here. Waiters queue (~100-300ms for a short clip)
+# instead of crashing the service.
+_WHISPER_LOCK = threading.Lock()
 
 # These optional speaker-recognition deps pull torch/torchaudio. A broken native
 # build (e.g. a torchaudio wheel linked against CUDA on a ROCm/CPU host) raises
@@ -110,14 +119,15 @@ def run_whisper(
     try:
         audio = _load_for_whisper(wav_path)
         model = get_model()
-        segments = model.transcribe(
-            audio,
-            language="en",
-            initial_prompt=prompt or "",
-            temperature=temperature,
-            temperature_inc=temperature_inc,
-            beam_search={"beam_size": beam_size, "patience": -1.0},
-        )
+        with _WHISPER_LOCK:
+            segments = model.transcribe(
+                audio,
+                language="en",
+                initial_prompt=prompt or "",
+                temperature=temperature,
+                temperature_inc=temperature_inc,
+                beam_search={"beam_size": beam_size, "patience": -1.0},
+            )
     except Exception as e:
         raise WhisperTranscriptionError(
             f"Whisper transcription failed: {type(e).__name__}: {e}",

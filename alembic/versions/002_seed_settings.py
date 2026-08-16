@@ -49,9 +49,11 @@ SETTINGS = [
         "requires_reload": False,
         "is_secret": False,
     },
+    # Insert-if-missing seed (ON CONFLICT DO NOTHING): an existing row —
+    # customized or previously seeded — is never overwritten by this value.
     {
         "key": "whisper.default_beam_size",
-        "value": "5",
+        "value": "2",
         "value_type": "int",
         "category": "whisper.transcription",
         "description": "Default beam size for beam search (1-16)",
