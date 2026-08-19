@@ -104,8 +104,15 @@ COPY pyproject.toml .
 # pywhispercpp ships CPU-only wheels on PyPI. Force a source build with HIP so it
 # links against ROCm libs and runs whisper.cpp inference on the GPU. Pinned
 # version matches pyproject.toml.
+# torch/torchaudio are PINNED + PyPI kept as an extra index (see Dockerfile.gpu for
+# the full rationale). A bare --index-url excludes PyPI, so an UNPINNED torch whose
+# transitive deps the rocm7.2 index later prunes would fail with ResolutionImpossible
+# — the exact break that hit the cu124 build 2026-08-14.
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/rocm7.2 torch torchaudio \
+    && pip install --no-cache-dir \
+       --index-url https://download.pytorch.org/whl/rocm7.2 \
+       --extra-index-url https://pypi.org/simple \
+       torch==2.13.0 torchaudio==2.11.0 \
     && AMDGPU_TARGETS="${WHISPER_AMDGPU_TARGETS}" \
        GGML_HIP=1 ROCM_PATH=/opt/rocm GGML_NATIVE=0 \
        pip install --no-cache-dir --no-binary pywhispercpp pywhispercpp==1.4.1 \
