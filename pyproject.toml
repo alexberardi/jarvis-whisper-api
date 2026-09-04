@@ -26,7 +26,7 @@ dependencies = [
     "alembic>=1.12.1",
     "psycopg2-binary>=2.9.9",
     "jarvis-settings-client @ git+https://github.com/alexberardi/jarvis-settings-client.git@402674d",
-    "jarvis-auth-client @ git+https://github.com/alexberardi/jarvis-auth-client.git@4549b23",
+    "jarvis-auth-client @ git+https://github.com/alexberardi/jarvis-auth-client.git@a656811",
 ]
 
 [project.optional-dependencies]
