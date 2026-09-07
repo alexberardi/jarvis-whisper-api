@@ -78,7 +78,12 @@ COPY pyproject.toml .
 # is off by default (falls back to CPU). Build pywhispercpp from source with Vulkan
 # so the in-process STT engine runs on the GPU (GGML_VULKAN=1 is forwarded to its
 # vendored whisper.cpp cmake, same mechanism the HIP build uses with GGML_HIP=1).
-RUN pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cpu \
+# torch/torchaudio PINNED + PyPI kept as an extra index for reproducibility (see
+# Dockerfile.gpu for the rationale — same unpinned-drift class as the cu124 break).
+RUN pip install --no-cache-dir \
+    --index-url https://download.pytorch.org/whl/cpu \
+    --extra-index-url https://pypi.org/simple \
+    torch==2.13.0 torchaudio==2.11.0 \
     && GGML_VULKAN=1 GGML_NATIVE=0 \
        pip install --no-cache-dir --no-binary pywhispercpp pywhispercpp==1.4.1 \
     && pip install --no-cache-dir .
