@@ -30,6 +30,7 @@ class _EngineFingerprint:
     model_path: str
     n_threads: int
     allow_autodownload: bool
+    use_gpu: bool
 
 
 def _read_fingerprint() -> _EngineFingerprint:
@@ -51,10 +52,14 @@ def _read_fingerprint() -> _EngineFingerprint:
         )
     n_threads = int(os.getenv("WHISPER_N_THREADS", "4"))
     allow_autodownload = settings.get_bool("whisper.allow_model_autodownload", False)
+    use_gpu = settings.get_bool(
+        "whisper.use_gpu", os.getenv("WHISPER_USE_GPU", "false").lower() == "true"
+    )
     return _EngineFingerprint(
         model_path=model_path,
         n_threads=n_threads,
         allow_autodownload=allow_autodownload,
+        use_gpu=use_gpu,
     )
 
 
@@ -86,13 +91,23 @@ def _build_model(fp: _EngineFingerprint) -> "Model":
         )
 
     logger.info(
-        "Loading whisper model from %s (n_threads=%d)",
+        "Loading whisper model from %s (n_threads=%d, use_gpu=%s)",
         resolved,
         fp.n_threads,
+        fp.use_gpu,
     )
+    # pywhispercpp takes GPU selection through context_params; passing
+    # n_gpu_layers as a top-level kwarg lands on whisper_full_params and
+    # raises at startup.
+    context_params = None
+    if fp.use_gpu:
+        from pywhispercpp.model import ContextParams
+
+        context_params = ContextParams(use_gpu=True, gpu_device=0)
     return Model(
         model=resolved,
         n_threads=fp.n_threads,
+        context_params=context_params,
         print_progress=False,
         print_realtime=False,
     )

@@ -9,6 +9,22 @@ from jarvis_settings_client import SettingDefinition
 SETTINGS_DEFINITIONS: list[SettingDefinition] = [
     # Whisper model configuration
     SettingDefinition(
+        key="whisper.use_gpu",
+        category="whisper.model",
+        value_type="bool",
+        default=False,
+        description=(
+            "Offload whisper.cpp inference to the GPU. Only meaningful on the "
+            "CUDA image (docker-compose.gpu.yaml / Dockerfile.gpu), which "
+            "compiles whisper.cpp with -DGGML_CUDA=ON; on the CPU image this "
+            "is a no-op. The legacy WHISPER_ENABLE_CUDA env var only ever "
+            "documented this intent -- nothing read it, and the GPU image "
+            "ignores it, so offload stayed off even with CUDA compiled in."
+        ),
+        env_fallback="WHISPER_USE_GPU",
+        requires_reload=True,
+    ),
+    SettingDefinition(
         key="whisper.model_path",
         category="whisper.model",
         value_type="string",
